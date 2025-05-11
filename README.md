@@ -31,9 +31,12 @@
     # Convert the counts file to tabix format
     bgzip -c ${sample}.counts.tsv > ${sample}.counts.tsv.gz
     tabix -s 1 -b 2 -e 2 ${sample}.counts.tsv.gz
-
-
     ```
+
+### Open the notebook
+
+`footprint_to_procap.ipynb`
+
 
 
     
