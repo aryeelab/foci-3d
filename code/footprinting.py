@@ -94,7 +94,7 @@ def get_count_matrix(counts_gz: str,
                      window_end: int,
                      fragment_len_min = 25,
                      fragment_len_max = 150,
-                     scale_factor_dict = None, 
+                     scale_factor_dict = None,
                      sigma = 0,
                      log = False) -> pd.DataFrame:
     """
@@ -164,18 +164,18 @@ def get_count_matrix(counts_gz: str,
         df = pd.concat([df, missing_df], ignore_index=True)
 
     # Cap fragment length to fragment_len_max. i.e. the fragment_length==fragment_len_max row represents
-    # the sum of all fragments >= fragment_len_max. 
+    # the sum of all fragments >= fragment_len_max.
     df_low = df[df['fragment_length'] < fragment_len_max].copy()
     df_high = df[df['fragment_length'] >= fragment_len_max]
     df_high_agg = (df_high.groupby(['chrom','pos'], as_index=False)['count'].sum())
     df_high_agg['fragment_length'] = fragment_len_max
     df = pd.concat([df_low, df_high_agg], ignore_index=True)
     df = df.sort_values(['chrom','pos','fragment_length']).reset_index(drop=True)
-    
+
     df['fragment_length'] = df['fragment_length'].clip(upper=fragment_len_max)
     # For each position, sum counts for all rows with length=fragment_len_max
     df = df.groupby(['chrom', 'pos', 'fragment_length'], as_index=False).sum()
-    
+
 
     # pivot to get matrix and fill gaps with 0
     mat = df.pivot(index='fragment_length', columns='pos', values='count').fillna(0)
@@ -206,7 +206,7 @@ def get_count_matrix(counts_gz: str,
     if log:
         # Replace values < 1 with 1
         mat = mat.where(mat >= 1, 1)
-        mat = np.log2(mat) 
+        mat = np.log2(mat)
 
     return mat, raw_total_counts
 
@@ -329,7 +329,7 @@ def plot_count_matrix(
     ax_heat.set_aspect(aspect)
     ax_heat.set_title(title)
     ax_heat.set_ylabel('Fragment Length')
-    
+
     # Y-axis ticks every 20, then invert so largest at top
     start_len, end_len = mat_plot.index.min(), mat_plot.index.max()
     ytick_vals = np.arange(20 * (start_len // 20 + 1), end_len + 1, 20)
@@ -381,17 +381,154 @@ def plot_count_matrix(
 
     plt.show()
 
-def get_footprint_and_procap(fragment_counts_gz, 
-                             procap_bw, 
+def get_valid_windows(counts_gz, chromosomes=None, window_overlap_bp=0, window_size=1024, maxgap=1000, max_windows=None):
+    """
+    Construct a set of windows from a counts.gz file, focusing on regions with signal.
+
+    The function identifies 'valid' segments where the spacing between
+    subsequent data points is less than maxgap, and creates windows on the fly.
+    This allows early termination when max_windows is specified.
+
+    Parameters
+    ----------
+    counts_gz : str
+        Path to a bgzip-compressed, tabix-indexed TSV of:
+        chrom \t pos \t fragment_length \t count
+    chromosomes : list, optional
+        Either:
+        - List of chromosome names to process (e.g., ['chr1', 'chr2'])
+        - List of tuples specifying chromosome regions: [(chrom, start, end), ...]
+          where each tuple restricts windows to fall within the specified start/end positions
+        If None, all chromosomes in the file are used.
+    window_overlap_bp : int, default 0
+        Number of base pairs to overlap between adjacent windows.
+        If 0, windows are non-overlapping.
+    window_size : int, default 1024
+        Size of each window in base pairs.
+    maxgap : int, default 1000
+        Maximum allowed gap between data points to consider a segment 'valid'.
+    max_windows : int, optional
+        Maximum number of windows to generate. If specified, the function will
+        return early after generating this many windows. Useful for testing.
+
+    Returns
+    -------
+    list of tuple
+        List of (chrom, start, end) tuples representing windows.
+        Each window is exactly window_size in length.
+    """
+    tb = pysam.TabixFile(counts_gz)
+
+    # If chromosomes not specified, get all chromosomes from the tabix file
+    if chromosomes is None:
+        chrom_regions = [(chrom, None, None) for chrom in tb.contigs]
+    else:
+        # Check if chromosomes is a list of strings or a list of tuples
+        if chromosomes and isinstance(chromosomes[0], tuple):
+            # List of tuples: [(chrom, start, end), ...]
+            chrom_regions = chromosomes
+        else:
+            # List of strings: ['chr1', 'chr2', ...]
+            chrom_regions = [(chrom, None, None) for chrom in chromosomes]
+
+    all_windows = []
+    step_size = window_size - window_overlap_bp
+
+    for chrom_info in chrom_regions:
+        chrom = chrom_info[0]
+        region_start = chrom_info[1]
+        region_end = chrom_info[2]
+
+        # Process one segment at a time and create windows on the fly
+        prev_pos = None
+        seg_start = None
+
+        # Fetch records for this chromosome, optionally restricted to region
+        if region_start is not None and region_end is not None:
+            records = tb.fetch(chrom, region_start, region_end)
+        else:
+            records = tb.fetch(chrom)
+
+        for rec in records:
+            pos = int(rec.split('\t', 2)[1])
+
+            # Skip positions outside the specified region if region is defined
+            if region_start is not None and pos < region_start:
+                continue
+            if region_end is not None and pos > region_end:
+                break
+
+            if prev_pos is None:
+                # first position seen
+                seg_start = pos
+                prev_pos = pos
+                continue
+
+            if pos - prev_pos <= maxgap:
+                # still in the same "valid" segment
+                prev_pos = pos
+            else:
+                # gap too large → close old segment, create windows, and start new one
+                seg_end = prev_pos
+                seg_length = seg_end - seg_start + 1
+
+                # Only process segments that are long enough
+                if seg_length >= window_size:
+                    # Create windows for this segment
+                    for window_start in range(seg_start, seg_end - window_size + 2, step_size):
+                        window_end = window_start + window_size - 1
+
+                        # Ensure we don't exceed segment end
+                        if window_end <= seg_end:
+                            # Ensure window is within the specified region if region is defined
+                            if (region_start is None or window_start >= region_start) and \
+                               (region_end is None or window_end <= region_end):
+                                all_windows.append((chrom, window_start, window_end))
+
+                                # Check if we've reached the maximum number of windows
+                                if max_windows is not None and len(all_windows) >= max_windows:
+                                    return all_windows
+
+                # Start a new segment
+                seg_start = pos
+                prev_pos = pos
+
+        # Process the final segment if it exists
+        if prev_pos is not None:
+            seg_end = prev_pos
+            seg_length = seg_end - seg_start + 1
+
+            # Only process segments that are long enough
+            if seg_length >= window_size:
+                # Create windows for this segment
+                for window_start in range(seg_start, seg_end - window_size + 2, step_size):
+                    window_end = window_start + window_size - 1
+
+                    # Ensure we don't exceed segment end
+                    if window_end <= seg_end:
+                        # Ensure window is within the specified region if region is defined
+                        if (region_start is None or window_start >= region_start) and \
+                           (region_end is None or window_end <= region_end):
+                            all_windows.append((chrom, window_start, window_end))
+
+                            # Check if we've reached the maximum number of windows
+                            if max_windows is not None and len(all_windows) >= max_windows:
+                                return all_windows
+
+    return all_windows
+
+
+def get_footprint_and_procap(fragment_counts_gz,
+                             procap_bw,
                              avg_count_per_fragment_length,
                              chrom, window_start, window_end, footprint_sigma=10):
-    
-    footprint, raw_total_counts = get_count_matrix(counts_gz = fragment_counts_gz, 
-                                    chrom=chrom, window_start=window_start, window_end=window_end, 
+
+    footprint, raw_total_counts = get_count_matrix(counts_gz = fragment_counts_gz,
+                                    chrom=chrom, window_start=window_start, window_end=window_end,
                                     fragment_len_min = 25, fragment_len_max = 150,
                                     scale_factor_dict=avg_count_per_fragment_length,
                                     sigma=footprint_sigma)
-    
+
 
     procap = get_bw_signal(procap_bw, chrom, window_start, window_end)
 

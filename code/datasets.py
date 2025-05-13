@@ -2,6 +2,9 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
+from torch.utils.data._utils.collate import default_collate
+
+
 
 class FootprintDataset(Dataset):
     def __init__(self, regions, accessor_fn):
@@ -24,6 +27,11 @@ class FootprintDataset(Dataset):
         chrom, start, end = self.regions[idx]
         fp, _, procap   = self.accessor(chrom, start, end)
 
+        # If data is missing (e.g. unmappable region)
+        if fp.sum().sum() == 0:
+            print("Missing region: start = ", start)
+            return None
+    
         # convert pandas to numpy if needed
         if hasattr(fp, "to_numpy"):
             fp = fp.to_numpy()
@@ -51,6 +59,16 @@ class FootprintDataset(Dataset):
 
         return x, y
 
+def drop_collate(batch):
+    batch = [b for b in batch if b is not None]
+    # Print length of batch
+    #print("Batch length:", len(batch))
+    if not batch:
+        print("Empty batch")
+        return None
+    return default_collate(batch)
+
+
 class FootprintDataModule(pl.LightningDataModule):
     def __init__(self, train_regions, val_regions, test_regions, accessor_fn,
                  batch_size=16, num_workers=4):
@@ -66,14 +84,15 @@ class FootprintDataModule(pl.LightningDataModule):
         self.train_ds = FootprintDataset(self.train_regions, self.accessor_fn)
         self.val_ds   = FootprintDataset(self.val_regions,   self.accessor_fn)
         self.test_ds  = FootprintDataset(self.test_regions,  self.accessor_fn)  
-        
+            
     def train_dataloader(self):
         return DataLoader(
             self.train_ds,
             batch_size=self.batch_size,
-            shuffle=True,
+            shuffle=False,
             num_workers=self.num_workers,
-            persistent_workers=True
+            persistent_workers=True,
+            collate_fn=drop_collate
         )
 
     def val_dataloader(self):

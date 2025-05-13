@@ -104,6 +104,8 @@ class UNetLightning(pl.LightningModule):
         return mu, theta
 
     def training_step(self, batch, batch_idx):
+        if batch is None:
+            return None
         x, y    = batch
         mu, θ   = self(x)
         mu      = mu.clamp(min=1e-3)
@@ -128,6 +130,8 @@ class UNetLightning(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
+        if batch is None:
+            return None        
         x, y    = batch
         mu, θ   = self(x)
         mu      = mu.clamp(min=1e-3)
@@ -162,6 +166,8 @@ class UNetLightning(pl.LightningModule):
         return loss
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        if batch is None:
+            return None
         x, _       = batch
         mu, theta  = self(x)
         return {"mu": mu, "theta": theta}
