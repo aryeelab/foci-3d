@@ -137,12 +137,6 @@ class UNetLightning(pl.LightningModule):
         mu      = mu.clamp(min=1e-3)
         p       = (θ / (θ + mu)).clamp(min=1e-6, max=1-1e-6)
 
-        # metrics
-        self.log("val_mu_min",    mu.min(),    prog_bar=True)
-        self.log("val_mu_max",    mu.max(),    prog_bar=True)
-        self.log("val_probs_min", p.min(),     prog_bar=True)
-        self.log("val_probs_max", p.max(),     prog_bar=True)
-
         # manual NB log-prob on CPU for extra safety
         y_cpu    = y.detach().cpu()
         μ_cpu    = mu.detach().cpu()
