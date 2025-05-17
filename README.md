@@ -1,13 +1,18 @@
+# MNase Footprint Tools
+
+This toolkit provides tools for analyzing and modeling DNA footprints from Micro-C and Region Capture Micro-C (RCMC) data. It includes utilities for preprocessing BAMs, visualizing footprints, and building predictive models that connect chromatin accessibility patterns to transcription initiation (PRO-Cap) signals.
+
+## Footprint preprocessing tools
+
+These steps preprocess Micro-C data -> fragment counts -> protein occupancy footprints that can be visualized and analyzed.
 
 ### Activate a virtual environment (e.g. conda or venv)
 ```bash
-# Install dependencies
-pip install torch pytorch-lightning
+# Install dependencies for preprocessing and visualization
 pip install pandas numpy matplotlib seaborn
-pip install wandb
-pip install pysam pyBigWig bioframe biopython
-pip install pysam pyBigWig scikit-learn
+pip install pysam pyBigWig
 pip install pairtools
+pip install tabix bgzip
 ```
 
 ### Process read pairs (bam) to fragment pairs (.pairs)
@@ -33,7 +38,7 @@ pairtools dedup -o ${SAMPLE}.pairs
 # Output is a TSV of chrom \t pos \t fragment_length \t count
 # This file is bgzip compressed and tabix indexed
 
-# Convert the pairs file to a fragments file (one fragement per line with chrom, midpoint and length columns)
+# Convert the pairs file to a fragments file (one fragment per line with chrom, midpoint and length columns)
 python code/pairs_to_fragments_tsv.py ${SAMPLE}.pairs ${SAMPLE}.fragments.tsv
 
 # Sort the fragments file
@@ -51,9 +56,9 @@ tabix -s 1 -b 2 -e 2 ${SAMPLE}.counts.tsv.gz
 rm ${SAMPLE}.fragments.tsv ${SAMPLE}.fragments.sorted.tsv ${SAMPLE}.counts.tsv
 ```
 
-## Visualizing the data
+### Visualizing the data
 
-After processing your data, you can visualize the footprints using the `plot_region.py` script:
+After preprocessing fragment data, you can visualize the footprints using the `plot_region.py` script:
 
 ```bash
 # Plot with PRO-Cap data and markers
@@ -66,10 +71,25 @@ python code/plot_region.py ${SAMPLE}.counts.tsv.gz \
     --title "Gins4 TSS Footprint"
 ```
 
+## Exploratory predictive modeling of footprints -> PRO-Cap signal 
 
-### Exploratory modeling of footprint -> Pro-Cap signal 
+This section covers building machine learning models to predict transcription initiation (PRO-Cap) signals from chromatin accessibility footprints.
 
-`footprint_to_procap.ipynb`
+### Activate a virtual environment (e.g. conda or venv)
+```bash
+# Install dependencies for modeling
+pip install torch pytorch-lightning
+pip install pandas numpy matplotlib seaborn
+pip install wandb
+pip install pysam pyBigWig bioframe biopython
+pip install scikit-learn
+```
+
+### Run the notebook
+The analysis and model training is available in the Jupyter notebook:
+```bash
+jupyter notebook code/footprint_to_procap.ipynb
+```
 
 
 
