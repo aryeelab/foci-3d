@@ -22,8 +22,6 @@ SAMPLE="test_data/mesc_microc_test"
 min_mapq=20
 chrom_sizes=test_data/mm10.chrom.sizes
 
-# Note: This is a simplified processing pipeline that does not include all filtering steps
-# It is intended for testing purposes only.
 samtools view -h ${SAMPLE}.bam | \
 pairtools parse --min-mapq ${min_mapq} --walks-policy 5unique --drop-sam \
     --max-inter-align-gap 30 --add-columns pos5,pos3 \
