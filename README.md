@@ -4,7 +4,7 @@ This toolkit provides tools for analyzing and modeling DNA footprints from Micro
 
 ## Footprint preprocessing tools
 
-These steps preprocess Micro-C data -> fragment counts -> protein occupancy footprints that can be visualized and analyzed.
+These steps preprocess Micro-C data to fragment counts. Counts are binned by fragment length and position (mid-point).
 
 ### Activate a virtual environment (e.g. conda or venv)
 ```bash
@@ -58,7 +58,7 @@ rm ${SAMPLE}.fragments.tsv ${SAMPLE}.fragments.sorted.tsv ${SAMPLE}.counts.tsv
 
 ### Visualizing the data
 
-After preprocessing fragment data, you can visualize the footprints using the `plot_region.py` script:
+After preprocessing reads to fragment counts, you can visualize the footprints using the `plot_region.py` script:
 
 ```bash
 # Plot with PRO-Cap data and markers
