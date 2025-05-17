@@ -250,7 +250,8 @@ def plot_count_matrix(
     tracks=None,            # dict[label -> pd.Series]
     xtick_spacing=1000,
     figsize=(10, 4),
-    aspect='auto'
+    aspect='auto',
+    return_fig=False
 ):
     """
     Plot a heatmap of `mat` with optional bar-track(s) below,
@@ -379,6 +380,10 @@ def plot_count_matrix(
         else:
             ax_tr.set_xticks([])
 
+    if return_fig:
+        return fig
+    else:
+        plt.show()
     plt.show()
 
 def get_valid_windows(counts_gz, chromosomes=None, window_overlap_bp=0, window_size=1024, maxgap=1000, max_windows=None):
@@ -521,11 +526,12 @@ def get_valid_windows(counts_gz, chromosomes=None, window_overlap_bp=0, window_s
 def get_footprint_and_procap(fragment_counts_gz,
                              procap_bw,
                              avg_count_per_fragment_length,
+                             fragment_len_min, fragment_len_max,
                              chrom, window_start, window_end, footprint_sigma=10):
 
     footprint, raw_total_counts = get_count_matrix(counts_gz = fragment_counts_gz,
                                     chrom=chrom, window_start=window_start, window_end=window_end,
-                                    fragment_len_min = 25, fragment_len_max = 150,
+                                    fragment_len_min = fragment_len_min, fragment_len_max = fragment_len_max,
                                     scale_factor_dict=avg_count_per_fragment_length,
                                     sigma=footprint_sigma)
 
