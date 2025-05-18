@@ -6,17 +6,16 @@ This toolkit provides tools for analyzing and modeling DNA footprints from Micro
 
 These steps preprocess Micro-C data to fragment counts. Counts are binned by fragment length and position (mid-point).
 
-### Activate a virtual environment (e.g. conda or venv)
+### Create a virtual environment 
 ```bash
 # Install dependencies for preprocessing and visualization
-pip install pandas numpy matplotlib seaborn
-pip install pysam pyBigWig
-pip install pairtools
-pip install tabix bgzip
+conda env create -f footprint-tools-env.yaml
 ```
 
 ### Process read pairs (bam) to fragment pairs (.pairs)
 ```bash
+conda activate footprint-tools
+
 SAMPLE="test_data/mesc_microc_test"
 
 min_mapq=20
