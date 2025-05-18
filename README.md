@@ -51,6 +51,10 @@ tabix -s 1 -b 2 -e 2 ${SAMPLE}.counts.tsv.gz
 
 # Remove temp files
 rm ${SAMPLE}.fragments.tsv ${SAMPLE}.fragments.sorted.tsv ${SAMPLE}.counts.tsv
+
+# Time the preprocessing steps
+# Note: This step reruns all the steps above and records timing
+python code/time_preprocessing.py ${SAMPLE}.pairs --output temp.counts.tsv.gz
 ```
 
 ### Visualizing the data
