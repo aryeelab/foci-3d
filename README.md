@@ -12,7 +12,9 @@ These steps preprocess Micro-C data to fragment counts. Counts are binned by fra
 conda env create -f footprint-tools-env.yaml
 ```
 
-### Process read pairs (bam) to fragment pairs (.pairs)
+### Preprocess read pairs to fragment counts
+
+#### Step 1: Read pairs (bam) to fragment pairs (.pairs)
 ```bash
 conda activate footprint-tools
 
@@ -29,7 +31,7 @@ pairtools sort | \
 pairtools dedup -o ${SAMPLE}.pairs 
 ```
 
-### Compute fragment midpoint, length counts
+#### Step 2: Fragment pairs (.pairs) to fragment counts by position and length (.counts.tsv.gz)
 ```bash
 # Computes a sparse matrix of fragment counts per chrom, midpoint, length bin
 # Output is a TSV of chrom \t pos \t fragment_length \t count
@@ -59,9 +61,9 @@ rm ${SAMPLE}.fragments.tsv ${SAMPLE}.fragments.sorted.tsv ${SAMPLE}.counts.tsv
 python code/time_preprocessing.py ${SAMPLE}.pairs --output temp.counts.tsv.gz
 ```
 
-### Visualizing the data
+### Visualizing footprints 
 
-After preprocessing reads to fragment counts, you can visualize the footprints using the `plot_region.py` script:
+After preprocessing reads as above, footprints (i.e. smoothed fragment counts) can be visualized. The 2D matrix of counts (x:axis = genomic position, y:axis = fragment length) can be row normalized (scaled by the average count per position for that fragment length) and then smoothed with a Gaussian kernel (sigma = 10 by default). 
 
 ```bash
 # Plot with PRO-Cap data and markers
@@ -76,7 +78,7 @@ python code/plot_region.py ${SAMPLE}.counts.tsv.gz \
 
 ## Exploratory predictive modeling of footprints -> PRO-Cap signal 
 
-This section covers building machine learning models to predict transcription initiation (PRO-Cap) signals from chromatin accessibility footprints.
+We are exploring building machine learning models to predict transcription initiation (PRO-Cap) signals from chromatin accessibility footprints.
 
 ### Install dependencies (within a virtual environment)
 ```bash
