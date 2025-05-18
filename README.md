@@ -54,7 +54,7 @@ rm ${SAMPLE}.fragments.tsv ${SAMPLE}.fragments.sorted.tsv ${SAMPLE}.counts.tsv
 
 # Time the preprocessing steps
 # Note: This step reruns all the steps above and records timing
-# On an M1 Mac with 16GB of RAM, the full pipeline takes ~2.5s for 1M fragments
+# On an M1 Mac, the "Compute fragment midpoint, length counts" pipeline above takes ~2.5s for 1M fragments
 #  or about 45 mins for 1B fragments
 python code/time_preprocessing.py ${SAMPLE}.pairs --output temp.counts.tsv.gz
 ```
