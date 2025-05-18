@@ -83,7 +83,7 @@ pip install scikit-learn
 ```
 
 ### Run the notebook
-The analysis and model training is available in the Jupyter notebook:
+Model training is being developed in the Jupyter notebook:
 ```bash
 jupyter notebook code/footprint_to_procap.ipynb
 ```
