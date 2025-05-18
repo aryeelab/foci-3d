@@ -53,11 +53,10 @@ tabix -s 1 -b 2 -e 2 ${SAMPLE}.counts.tsv.gz
 
 # Remove temp files
 rm ${SAMPLE}.fragments.tsv ${SAMPLE}.fragments.sorted.tsv ${SAMPLE}.counts.tsv
+```
 
-# Time the preprocessing steps
-# Note: This step reruns all the steps above and records timing
-# On an M1 Mac, the "Compute fragment midpoint, length counts" pipeline above takes ~2.5s for 1M fragments
-#  or about 45 mins for 1B fragments
+The Step 2 preprocessing steps can be timed using the `code/time_preprocessing.py` script. On an M1 Mac, the "Compute fragment midpoint, length counts" pipeline above takes ~2.5s for 1M fragments or about 45 mins for 1B fragments (~50X coverage when using 150bp reads).
+```bash
 python code/time_preprocessing.py ${SAMPLE}.pairs --output temp.counts.tsv.gz
 ```
 
