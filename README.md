@@ -72,7 +72,7 @@ python code/plot_region.py ${SAMPLE}.counts.tsv.gz \
 
 This section covers building machine learning models to predict transcription initiation (PRO-Cap) signals from chromatin accessibility footprints.
 
-### Activate a virtual environment (e.g. conda or venv)
+### Install dependencies (within a virtual environment)
 ```bash
 # Install dependencies for modeling
 pip install torch pytorch-lightning
