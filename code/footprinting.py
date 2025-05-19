@@ -10,6 +10,164 @@ from collections import defaultdict
 import matplotlib.gridspec as gridspec
 
 
+def nbparams_by_fraglen(tabix_path, chrom, gap_thresh=5000, min_data_points=10, outlier_percentile=95):
+    """
+    Estimate negative binomial distribution parameters for each fragment length,
+    ignoring any stretches > gap_thresh bases with zero data.
+
+    The negative binomial distribution is parameterized by mean (μ) and dispersion (α).
+    The variance is μ + μ²/α, and as α → ∞, the distribution approaches Poisson.
+
+    Parameters
+    ----------
+    tabix_path : str
+        Path to a bgzip-compressed, tabix-indexed TSV of:
+        chrom \t pos \t fragment_length \t count
+    chrom : str
+        Chromosome name to process (e.g. 'chr1')
+    gap_thresh : int, default 5000
+        Maximum allowed gap between data points to consider a segment 'valid'
+    min_data_points : int, default 10
+        Minimum number of data points required to estimate parameters
+    outlier_percentile : float, default 95
+        Percentile threshold for outlier removal (values above this percentile are excluded)
+
+    Returns
+    -------
+    dict[int, tuple]
+        Dictionary mapping fragment lengths to tuples of (mean μ, dispersion α)
+    """
+    tb = pysam.TabixFile(tabix_path)
+
+    # --- 1) First pass: discover "valid" segments --------------------------
+    segments = []         # list of (start, end) inclusive
+    prev_pos = None
+    seg_start = None
+
+    for rec in tb.fetch(chrom):
+        pos = int(rec.split('\t', 2)[1])
+
+        if prev_pos is None:
+            # first position seen
+            seg_start = pos
+            prev_pos = pos
+            continue
+
+        if pos - prev_pos <= gap_thresh:
+            # still in the same "valid" segment
+            prev_pos = pos
+        else:
+            # gap too large → close old segment, start new one
+            segments.append((seg_start, prev_pos))
+            seg_start = pos
+            prev_pos = pos
+
+    # finalize the last segment
+    if prev_pos is not None:
+        segments.append((seg_start, prev_pos))
+
+    # --- 2) Second pass: collect count frequencies per fragment_length ------------
+
+    # Dictionary to store count frequencies for each fragment length
+    # Structure: {frag_len: {count_value: frequency, ...}, ...}
+    freq_by_fraglen = defaultdict(lambda: defaultdict(int))
+
+    # reopen (or reset) the TabixFile
+    tb = pysam.TabixFile(tabix_path)
+
+    seg_i = 0
+    if not segments:
+        return {}  # No valid segments found
+
+    seg_start, seg_end = segments[0]
+
+    for rec in tb.fetch(chrom):
+        cols = rec.split('\t')
+        pos, frag_len, cnt = map(int, (cols[1], cols[2], cols[3]))
+
+        # advance to the segment that might contain this pos
+        while seg_i < len(segments) and pos > seg_end:
+            seg_i += 1
+            if seg_i < len(segments):
+                seg_start, seg_end = segments[seg_i]
+
+        if seg_i >= len(segments):
+            # we've passed all valid segments
+            break
+
+        # if current pos lies in the segment, increment the frequency for this count value
+        if seg_start <= pos <= seg_end:
+            freq_by_fraglen[frag_len][cnt] += 1
+
+    # --- 3) Estimate negative binomial parameters for each fragment length ---
+
+    # Function to fit negative binomial parameters using frequency table
+    def fit_negative_binomial_from_freq(freq_table):
+        # Calculate total number of data points
+        total_points = sum(freq_table.values())
+
+        # Need enough data points for reliable estimation
+        if total_points < min_data_points:
+            return None
+
+        # Calculate outlier threshold if needed
+        if total_points > min_data_points:
+            # Convert frequency table to cumulative distribution
+            sorted_counts = sorted(freq_table.keys())
+            cum_freq = 0
+            threshold_percentile = outlier_percentile / 100.0
+
+            for count in sorted_counts:
+                cum_freq += freq_table[count] / total_points
+                if cum_freq >= threshold_percentile:
+                    threshold = count
+                    break
+            else:
+                threshold = max(sorted_counts)
+        else:
+            threshold = max(freq_table.keys())
+
+        # Create filtered frequency table (excluding outliers)
+        filtered_freq = {k: v for k, v in freq_table.items() if k <= threshold}
+        filtered_total = sum(filtered_freq.values())
+
+        if filtered_total < min_data_points:
+            return None
+
+        # Calculate mean and variance from frequency table
+        mean = sum(k * v for k, v in filtered_freq.items()) / filtered_total
+
+        # Calculate variance using the frequency table
+        # Var(X) = E[X²] - E[X]²
+        mean_squared = sum(k**2 * v for k, v in filtered_freq.items()) / filtered_total
+        var = mean_squared - mean**2
+
+        # Adjust for unbiased estimator (n/(n-1) correction)
+        if filtered_total > 1:
+            var = var * filtered_total / (filtered_total - 1)
+
+        # If variance <= mean, data is under-dispersed relative to negative binomial
+        # In this case, return a high dispersion parameter (approaching Poisson)
+        if var <= mean or mean <= 0:
+            return (mean, 1000.0)  # High dispersion = close to Poisson
+
+        # Method of moments estimator for dispersion
+        dispersion = mean**2 / (var - mean)
+
+        # Ensure dispersion is positive and not too small
+        dispersion = max(dispersion, 0.01)
+
+        return (mean, dispersion)
+
+    # Estimate parameters for each fragment length
+    params = {}
+    for frag_len, freq_table in freq_by_fraglen.items():
+        result = fit_negative_binomial_from_freq(freq_table)
+        if result is not None:
+            params[frag_len] = result
+
+    return params
+
 def average_counts_by_fraglen(tabix_path, chrom, gap_thresh=5000):
     """
     Compute the average count per base for each fragment_length,
