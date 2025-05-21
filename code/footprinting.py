@@ -10,6 +10,123 @@ from collections import defaultdict
 import matplotlib.gridspec as gridspec
 
 
+def counts_by_fraglen(tabix_path, chrom, gap_thresh=5000, min_data_points=10, outlier_percentile=95):
+    """
+    Collect count frequencies for each fragment length, ignoring any stretches > gap_thresh bases with zero data.
+
+    This function returns the raw frequency distribution of counts for each fragment length,
+    which can be used for statistical analysis or visualization.
+
+    Parameters
+    ----------
+    tabix_path : str
+        Path to a bgzip-compressed, tabix-indexed TSV of:
+        chrom \t pos \t fragment_length \t count
+    chrom : str
+        Chromosome name to process (e.g. 'chr1')
+    gap_thresh : int, default 5000
+        Maximum allowed gap between data points to consider a segment 'valid'
+    min_data_points : int, default 10
+        Minimum number of data points required (unused, kept for API compatibility)
+    outlier_percentile : float, default 95
+        Percentile threshold for outlier removal (unused, kept for API compatibility)
+
+    Returns
+    -------
+    dict[int, dict[int, int]]
+        Nested dictionary with structure: {frag_len: {count_value: frequency, ...}, ...}
+        Includes zero counts for positions within valid segments where no fragments were observed.
+    """
+    tb = pysam.TabixFile(tabix_path)
+
+    # --- 1) First pass: discover "valid" segments --------------------------
+    segments = []         # list of (start, end) inclusive
+    prev_pos = None
+    seg_start = None
+
+    for rec in tb.fetch(chrom):
+        pos = int(rec.split('\t', 2)[1])
+
+        if prev_pos is None:
+            # first position seen
+            seg_start = pos
+            prev_pos = pos
+            continue
+
+        if pos - prev_pos <= gap_thresh:
+            # still in the same "valid" segment
+            prev_pos = pos
+        else:
+            # gap too large → close old segment, start new one
+            segments.append((seg_start, prev_pos))
+            seg_start = pos
+            prev_pos = pos
+
+    # finalize the last segment
+    if prev_pos is not None:
+        segments.append((seg_start, prev_pos))
+
+    # --- 2) Second pass: collect observed positions and fragment lengths ------------
+
+    # Dictionary to store count frequencies for each fragment length
+    # Structure: {frag_len: {count_value: frequency, ...}, ...}
+    freq_by_fraglen = defaultdict(lambda: defaultdict(int))
+
+    # Dictionary to track observed positions for each fragment length
+    # Structure: {frag_len: {pos: True, ...}, ...}
+    observed_positions = defaultdict(set)
+
+    # Set to track all fragment lengths encountered
+    all_frag_lengths = set()
+
+    # reopen (or reset) the TabixFile
+    tb = pysam.TabixFile(tabix_path)
+
+    seg_i = 0
+    if not segments:
+        return {}  # No valid segments found
+
+    seg_start, seg_end = segments[0]
+
+    for rec in tb.fetch(chrom):
+        cols = rec.split('\t')
+        pos, frag_len, cnt = map(int, (cols[1], cols[2], cols[3]))
+
+        # advance to the segment that might contain this pos
+        while seg_i < len(segments) and pos > seg_end:
+            seg_i += 1
+            if seg_i < len(segments):
+                seg_start, seg_end = segments[seg_i]
+
+        if seg_i >= len(segments):
+            # we've passed all valid segments
+            break
+
+        # if current pos lies in the segment, increment the frequency for this count value
+        if seg_start <= pos <= seg_end:
+            freq_by_fraglen[frag_len][cnt] += 1
+            observed_positions[frag_len].add(pos)
+            all_frag_lengths.add(frag_len)
+
+    # --- 3) Calculate total positions in valid segments and add zero counts ------------
+
+    # Calculate total number of positions in all valid segments
+    total_positions = sum(end - start + 1 for start, end in segments)
+
+    # Add zero counts for each fragment length
+    for frag_len in all_frag_lengths:
+        # Count positions with non-zero counts for this fragment length
+        observed_count = len(observed_positions[frag_len])
+
+        # Calculate number of positions with zero counts
+        zero_count = total_positions - observed_count
+
+        # Add zero counts to the frequency table
+        if zero_count > 0:
+            freq_by_fraglen[frag_len][0] = zero_count
+
+    return freq_by_fraglen
+
 def nbparams_by_fraglen(tabix_path, chrom, gap_thresh=5000, min_data_points=10, outlier_percentile=95):
     """
     Estimate negative binomial distribution parameters for each fragment length,
