@@ -13,17 +13,10 @@ from skimage.feature import peak_local_max
 from skimage.segmentation import watershed
 from skimage.measure import regionprops
 
-
-# Import blob detection functionality
-try:
-    from code.blob_detection import detect_blobs
-except ImportError:
-    try:
-        from blob_detection import detect_blobs
-    except ImportError:
-        # Define a placeholder function that will raise an error when called
-        def detect_blobs(*args, **kwargs):
-            raise ImportError("Could not import detect_blobs function. Make sure blob_detection.py is in your path.")
+# Import libraries for parallel processing and progress tracking
+import multiprocessing
+from joblib import Parallel, delayed
+from tqdm import tqdm
 
 
 def counts_by_fraglen(tabix_path, chrom, gap_thresh=5000, min_data_points=10, outlier_percentile=95):
@@ -567,7 +560,7 @@ def plot_count_matrix(
     tracks : dict[str, pd.Series], optional
         Additional continuous signals: {label: series indexed by columns of `mat`}.
     blobs : pandas.DataFrame, optional
-        DataFrame of blob data as returned by detect_blobs function.
+        DataFrame of blob data as returned by detect_blobs_matrix or detect_footprints function.
         Should contain 'fragment_length' and 'position' columns.
     blob_marker : str, optional
         Marker style for blob visualization (default='o').
@@ -969,10 +962,147 @@ def get_footprint_and_procap(fragment_counts_gz,
         raise ValueError("Either (chrom, window_start, window_end) or chromosomes must be provided")
 
 
+def detect_footprints(counts_gz,
+                  chromosomes=None,
+                  window_size=10000,
+                  pad=200,
+                  threshold=10.0,
+                  sigma=1.0,
+                  min_size=5,
+                  fragment_len_min=25,
+                  fragment_len_max=150,
+                  scale_factor_dict=None,
+                  num_cores=4):
+    """
+    Process genomic regions in windows and detect footprints using the detect_blobs_matrix function.
+
+    Parameters
+    ----------
+    counts_gz : str
+        Path to the counts file (required)
+    chromosomes : list, optional
+        List of chromosomes or regions to process, using the same format as in get_valid_windows function.
+        If unspecified all chromosomes are processed.
+    window_size : int, optional
+        Size of each processing window in base pairs (default: 10000)
+    pad : int, optional
+        Padding around each window to avoid edge effects (default: 200)
+    threshold : float
+        Minimum signal intensity to be considered part of a blob (required)
+    sigma : float
+        Standard deviation for Gaussian smoothing (required)
+    min_size : int, optional
+        Minimum blob size in pixels (default: 5)
+    fragment_len_min : int, optional
+        Minimum fragment length to include (default: 25)
+    fragment_len_max : int, optional
+        Maximum fragment length to include (default: 150)
+    scale_factor_dict : dict, optional
+        Dictionary of scaling factors for normalization (required)
+    num_cores : int, optional
+        Number of CPU cores to use for parallel processing (default: 4)
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with one row per detected footprint, containing columns:
+        - 'chrom': Chromosome name
+        - 'fragment_length': Fragment length coordinate of peak intensity
+        - 'position': Basepair position coordinate of peak intensity
+        - 'size': Number of pixels in the blob
+        - 'max_signal': Maximum signal value in the blob
+        - 'mean_signal': Average signal value across the blob
+        - 'total_signal': Sum of all signal values in the blob
+        - 'window_start': Start position of the window where the blob was detected
+        - 'window_end': End position of the window where the blob was detected
+    """
+    # Get valid windows for processing
+    windows = get_valid_windows(
+        counts_gz=counts_gz,
+        chromosomes=chromosomes,
+        window_size=window_size,
+        window_overlap_bp=0,  # No overlap between windows
+        maxgap=1000  # Skip regions with large gaps
+    )
+
+    # Define the function to process a single window
+    def process_window(window):
+        chrom, window_start, window_end = window
+
+        try:
+            # Get count matrix for this window with padding
+            footprint, _ = get_count_matrix(
+                counts_gz=counts_gz,
+                chrom=chrom,
+                window_start=window_start-pad,
+                window_end=window_end+pad,
+                fragment_len_min=fragment_len_min,
+                fragment_len_max=fragment_len_max,
+                scale_factor_dict=scale_factor_dict,
+                sigma=sigma 
+            )
+
+            # Skip empty windows
+            if footprint.empty or footprint.shape[0] == 0 or footprint.shape[1] == 0:
+                return pd.DataFrame()
+
+            # Detect blobs in the footprint matrix
+            window_blobs = detect_blobs_matrix(
+                footprint_matrix=footprint,
+                threshold=threshold,
+                min_size=min_size
+            )
+
+            # Skip if no blobs were detected
+            if window_blobs.empty:
+                return pd.DataFrame()
+
+            # Add chromosome and window information
+            window_blobs['chrom'] = chrom
+            window_blobs['window_start'] = window_start
+            window_blobs['window_end'] = window_end
+
+            # Filter out blobs that fall outside the actual window (excluding padding)
+            window_blobs = window_blobs[
+                (window_blobs['position'] >= window_start) &
+                (window_blobs['position'] <= window_end)
+            ]
+
+            return window_blobs
+
+        except Exception as e:
+            print(f"Error processing window {chrom}:{window_start}-{window_end}: {e}")
+            return pd.DataFrame()
+
+    # Determine the number of cores to use
+    num_cores = min(num_cores, multiprocessing.cpu_count())
+
+    # Process windows in parallel with progress bar
+    print(f"Processing {len(windows)} windows using {num_cores} cores...")
+    results = Parallel(n_jobs=num_cores)(
+        delayed(process_window)(window) for window in tqdm(windows, desc="Detecting footprints")
+    )
+
+    # Combine results from all windows
+    all_blobs = pd.concat(results, ignore_index=True)
+
+    # Reorder columns for better readability
+    if not all_blobs.empty:
+        column_order = [
+            'chrom', 'position', 'fragment_length', 'size',
+            'max_signal', 'mean_signal', 'total_signal',
+            'window_start', 'window_end'
+        ]
+        all_blobs = all_blobs[column_order]
+
+    print(f"Detected {len(all_blobs)} footprints across {len(windows)} windows.")
+    return all_blobs
+
+
 def detect_blobs_matrix(footprint_matrix, threshold, min_size=5):
     """
     Detect blobs in a footprint matrix using watershed segmentation.
-    
+
     Parameters
     ----------
     footprint_matrix : numpy.ndarray or pandas.DataFrame
@@ -981,7 +1111,7 @@ def detect_blobs_matrix(footprint_matrix, threshold, min_size=5):
         Minimum signal intensity to be considered part of a blob
     min_size : int, optional
         Minimum blob size in pixels to be considered valid (default=5)
-        
+
     Returns
     -------
     pandas.DataFrame
@@ -1004,50 +1134,50 @@ def detect_blobs_matrix(footprint_matrix, threshold, min_size=5):
         # Create default indices if not provided
         fragment_lengths = np.arange(data.shape[0])
         positions = np.arange(data.shape[1])
-        
+
     # Create binary mask of regions above threshold
     binary_mask = data > threshold
-    
+
     # If no pixels are above threshold, return empty DataFrame
     if not np.any(binary_mask):
         return pd.DataFrame(columns=[
-            'fragment_length', 'position', 'size', 
+            'fragment_length', 'position', 'size',
             'max_signal', 'mean_signal', 'total_signal'
         ])
-    
+
     # Find local maxima to use as markers for watershed
     # These will be the seeds for the watershed algorithm
     distance = data.copy()
     distance[~binary_mask] = 0
-    
+
     # Find peaks in the distance image
     peaks_idx = peak_local_max(distance, min_distance=2, labels=binary_mask)
-    
+
     # Create markers for watershed
     markers = np.zeros_like(data, dtype=np.int32)
     for i, (y, x) in enumerate(peaks_idx, start=1):
         markers[y, x] = i
-    
+
     # Apply watershed algorithm to separate touching blobs
     labels = watershed(-data, markers, mask=binary_mask)
-    
+
     # Measure properties of each blob
     regions = regionprops(labels, intensity_image=data)
-    
+
     # Extract blob properties
     blob_data = []
     for region in regions:
         # Skip blobs that are too small
         if region.area < min_size:
             continue
-        
+
         # Find the coordinates of maximum intensity within the region
         y_max, x_max = region.coords[np.argmax([data[y, x] for y, x in region.coords])]
-        
+
         # Map back to original fragment length and position
         fragment_length = fragment_lengths[y_max]
         position = positions[x_max]
-        
+
         # Calculate blob properties
         blob_data.append({
             'fragment_length': fragment_length,
@@ -1057,6 +1187,6 @@ def detect_blobs_matrix(footprint_matrix, threshold, min_size=5):
             'mean_signal': region.mean_intensity,
             'total_signal': region.mean_intensity * region.area
         })
-    
+
     # Create DataFrame from blob data
     return pd.DataFrame(blob_data)
