@@ -9,6 +9,22 @@ import seaborn as sns
 from collections import defaultdict
 import matplotlib.gridspec as gridspec
 
+from skimage.feature import peak_local_max
+from skimage.segmentation import watershed
+from skimage.measure import regionprops
+
+
+# Import blob detection functionality
+try:
+    from code.blob_detection import detect_blobs
+except ImportError:
+    try:
+        from blob_detection import detect_blobs
+    except ImportError:
+        # Define a placeholder function that will raise an error when called
+        def detect_blobs(*args, **kwargs):
+            raise ImportError("Could not import detect_blobs function. Make sure blob_detection.py is in your path.")
+
 
 def counts_by_fraglen(tabix_path, chrom, gap_thresh=5000, min_data_points=10, outlier_percentile=95):
     """
@@ -523,6 +539,10 @@ def plot_count_matrix(
     min_frag_length=None,
     max_frag_length=None,
     tracks=None,            # dict[label -> pd.Series]
+    blobs=None,             # DataFrame of blob data
+    blob_marker='o',        # Marker style for blobs
+    blob_color='white',     # Color for blob markers
+    blob_size=5,            # Size of blob markers
     xtick_spacing=1000,
     figsize=(10, 4),
     aspect='auto',
@@ -546,6 +566,15 @@ def plot_count_matrix(
         Fragment-length clipping.
     tracks : dict[str, pd.Series], optional
         Additional continuous signals: {label: series indexed by columns of `mat`}.
+    blobs : pandas.DataFrame, optional
+        DataFrame of blob data as returned by detect_blobs function.
+        Should contain 'fragment_length' and 'position' columns.
+    blob_marker : str, optional
+        Marker style for blob visualization (default='o').
+    blob_color : str, optional
+        Color for blob markers (default='white').
+    blob_size : int, optional
+        Size of blob markers (default=5).
     xtick_spacing : int, optional
         Spacing between x-axis ticks in base pairs.
     figsize : tuple
@@ -606,6 +635,37 @@ def plot_count_matrix(
     ax_heat.set_title(title)
     ax_heat.set_ylabel('Fragment Length')
 
+    # Plot blobs if provided
+    if blobs is not None and not blobs.empty:
+        # Filter blobs to match the current view if needed
+        filtered_blobs = blobs.copy()
+        if min_frag_length is not None:
+            filtered_blobs = filtered_blobs[filtered_blobs['fragment_length'] >= min_frag_length]
+        if max_frag_length is not None:
+            filtered_blobs = filtered_blobs[filtered_blobs['fragment_length'] <= max_frag_length]
+
+        # Convert blob coordinates to plot coordinates
+        # For x-coordinates: position - start_bp
+        # For y-coordinates: need to map fragment_length to row index in mat_plot
+        x_coords = []
+        y_coords = []
+
+        for _, blob in filtered_blobs.iterrows():
+            # Check if the blob position is in the current view
+            if blob['position'] in mat_plot.columns and blob['fragment_length'] in mat_plot.index:
+                # Get the x-coordinate (column index)
+                x_coord = mat_plot.columns.get_loc(blob['position'])
+                # Get the y-coordinate (row index)
+                y_coord = mat_plot.index.get_loc(blob['fragment_length'])
+
+                x_coords.append(x_coord + 0.5)  # +0.5 to center in the cell
+                y_coords.append(y_coord + 0.5)  # +0.5 to center in the cell
+
+        # Plot the blob markers
+        if x_coords and y_coords:
+            ax_heat.scatter(x_coords, y_coords, marker=blob_marker,
+                           color=blob_color, s=blob_size, zorder=10)
+
     # Y-axis ticks every 20, then invert so largest at top
     start_len, end_len = mat_plot.index.min(), mat_plot.index.max()
     ytick_vals = np.arange(20 * (start_len // 20 + 1), end_len + 1, 20)
@@ -635,25 +695,26 @@ def plot_count_matrix(
     xtick_positions = np.arange(start_bp, end_bp+1, xtick_spacing) - start_bp
     xtick_labels = [f"{v:,}" for v in np.arange(start_bp, end_bp+1, xtick_spacing)]
 
-    # Draw each additional track below
-    for i, (label, series) in enumerate(tracks.items(), start=1):
-        ax_tr = fig.add_subplot(gs[i, 0])
-        # align series to mat_plot columns
-        track = series.reindex(mat_plot.columns).fillna(0)
-        ax_tr.bar(
-            np.arange(mat_plot.shape[1]),
-            track.values,
-            width=1,
-            align='edge'
-        )
-        ax_tr.set_ylabel(label)
-        # bottom track: set x-ticks and annotate if needed
-        if i == n_tracks:
-            ax_tr.set_xticks(xtick_positions)
-            ax_tr.set_xticklabels(xtick_labels, rotation=0, ha='center')
-            ax_tr.set_xlabel('Position (bp)')
-        else:
-            ax_tr.set_xticks([])
+    # Draw each additional track below if provided
+    if tracks:
+        for i, (label, series) in enumerate(tracks.items(), start=1):
+            ax_tr = fig.add_subplot(gs[i, 0])
+            # align series to mat_plot columns
+            track = series.reindex(mat_plot.columns).fillna(0)
+            ax_tr.bar(
+                np.arange(mat_plot.shape[1]),
+                track.values,
+                width=1,
+                align='edge'
+            )
+            ax_tr.set_ylabel(label)
+            # bottom track: set x-ticks and annotate if needed
+            if i == n_tracks:
+                ax_tr.set_xticks(xtick_positions)
+                ax_tr.set_xticklabels(xtick_labels, rotation=0, ha='center')
+                ax_tr.set_xlabel('Position (bp)')
+            else:
+                ax_tr.set_xticks([])
 
     if return_fig:
         return fig
@@ -906,3 +967,96 @@ def get_footprint_and_procap(fragment_counts_gz,
 
     else:
         raise ValueError("Either (chrom, window_start, window_end) or chromosomes must be provided")
+
+
+def detect_blobs(footprint_matrix, threshold, min_size=5):
+    """
+    Detect blobs in a footprint matrix using watershed segmentation.
+    
+    Parameters
+    ----------
+    footprint_matrix : numpy.ndarray or pandas.DataFrame
+        A 2D array representing the footprint data (fragment lengths x positions)
+    threshold : float
+        Minimum signal intensity to be considered part of a blob
+    min_size : int, optional
+        Minimum blob size in pixels to be considered valid (default=5)
+        
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with one row per detected blob, containing columns:
+        - 'fragment_length': Fragment length coordinate of peak intensity
+        - 'position': Basepair position coordinate of peak intensity
+        - 'size': Number of pixels in the blob
+        - 'max_signal': Maximum signal value in the blob
+        - 'mean_signal': Average signal value across the blob
+        - 'total_signal': Sum of all signal values in the blob
+    """
+    # Convert DataFrame to numpy array if needed
+    if isinstance(footprint_matrix, pd.DataFrame):
+        # Save the index and columns for later reference
+        fragment_lengths = footprint_matrix.index.values
+        positions = footprint_matrix.columns.values
+        data = footprint_matrix.values
+    else:
+        data = footprint_matrix
+        # Create default indices if not provided
+        fragment_lengths = np.arange(data.shape[0])
+        positions = np.arange(data.shape[1])
+        
+    # Create binary mask of regions above threshold
+    binary_mask = data > threshold
+    
+    # If no pixels are above threshold, return empty DataFrame
+    if not np.any(binary_mask):
+        return pd.DataFrame(columns=[
+            'fragment_length', 'position', 'size', 
+            'max_signal', 'mean_signal', 'total_signal'
+        ])
+    
+    # Find local maxima to use as markers for watershed
+    # These will be the seeds for the watershed algorithm
+    distance = data.copy()
+    distance[~binary_mask] = 0
+    
+    # Find peaks in the distance image
+    peaks_idx = peak_local_max(distance, min_distance=2, labels=binary_mask)
+    
+    # Create markers for watershed
+    markers = np.zeros_like(data, dtype=np.int32)
+    for i, (y, x) in enumerate(peaks_idx, start=1):
+        markers[y, x] = i
+    
+    # Apply watershed algorithm to separate touching blobs
+    labels = watershed(-data, markers, mask=binary_mask)
+    
+    # Measure properties of each blob
+    regions = regionprops(labels, intensity_image=data)
+    
+    # Extract blob properties
+    blob_data = []
+    for region in regions:
+        # Skip blobs that are too small
+        if region.area < min_size:
+            continue
+        
+        # Find the coordinates of maximum intensity within the region
+        y_max, x_max = region.coords[np.argmax([data[y, x] for y, x in region.coords])]
+        
+        # Map back to original fragment length and position
+        fragment_length = fragment_lengths[y_max]
+        position = positions[x_max]
+        
+        # Calculate blob properties
+        blob_data.append({
+            'fragment_length': fragment_length,
+            'position': position,
+            'size': region.area,
+            'max_signal': region.max_intensity,
+            'mean_signal': region.mean_intensity,
+            'total_signal': region.mean_intensity * region.area
+        })
+    
+    # Create DataFrame from blob data
+    return pd.DataFrame(blob_data)
