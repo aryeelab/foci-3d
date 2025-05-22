@@ -1017,13 +1017,15 @@ def detect_footprints(counts_gz,
         - 'window_end': End position of the window where the blob was detected
     """
     # Get valid windows for processing
+    print("Getting valid windows...")
     windows = get_valid_windows(
         counts_gz=counts_gz,
         chromosomes=chromosomes,
         window_size=window_size,
-        window_overlap_bp=0,  # No overlap between windows
+        window_overlap_bp=pad,
         maxgap=1000  # Skip regions with large gaps
     )
+    print(f"Found {len(windows)} windows.")
 
     # Define the function to process a single window
     def process_window(window):
