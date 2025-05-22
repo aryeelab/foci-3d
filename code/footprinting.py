@@ -969,7 +969,7 @@ def get_footprint_and_procap(fragment_counts_gz,
         raise ValueError("Either (chrom, window_start, window_end) or chromosomes must be provided")
 
 
-def detect_blobs(footprint_matrix, threshold, min_size=5):
+def detect_blobs_matrix(footprint_matrix, threshold, min_size=5):
     """
     Detect blobs in a footprint matrix using watershed segmentation.
     
