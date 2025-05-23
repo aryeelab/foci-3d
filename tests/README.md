@@ -24,7 +24,7 @@ python3 test_pairs_to_fragments.py
 
 ## Test Files
 
-- `test_pairs_to_fragments.py`: Tests the functionality of the `pairs_to_fragments_tsv.py` script, which converts pairs files to fragment counts.
+- `test_pairs_to_fragments.py`: Tests the functionality of the `pairs_to_fragments_tsv.py` script, which converts pairs files to fragment counts. This test uses a hardcoded MD5 checksum value to validate the output, allowing it to run even if the reference file is not present in the repository.
 
 ## Adding New Tests
 

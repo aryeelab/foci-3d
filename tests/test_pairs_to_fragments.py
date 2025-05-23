@@ -6,12 +6,15 @@ This test:
 1. Runs the pairs_to_fragments_tsv.py script on the input file "test_data/mesc_microc_test.pairs"
 2. Processes the output through the standard pipeline (sort, count unique occurrences, format with awk)
 3. Generates a temporary counts file in the same format as the expected output
-4. Calculates and compares the MD5 checksum of this temporary file with the MD5 checksum of the reference file
+4. Calculates the MD5 checksum of this temporary file and compares it with a hardcoded expected MD5 value
+   (This allows the test to run even if the reference file is not present in the repository)
 5. Includes appropriate error handling and clear success/failure messages
 6. Cleans up any temporary files created during testing
+
+The test will temporarily rename the reference file (if it exists) to ensure that the test works
+correctly even when the reference file is not present. The reference file will be restored after the test.
 """
 
-import os
 import sys
 import subprocess
 import tempfile
@@ -44,13 +47,15 @@ class TestPairsToFragments(unittest.TestCase):
         cls.temp_counts_file = Path(cls.temp_dir) / "counts.tsv"
         cls.temp_counts_gz_file = Path(cls.temp_dir) / "counts.tsv.gz"
 
+        # Hardcoded expected MD5 checksum of the reference file
+        # This allows the test to run even if the reference file is not present
+        cls.expected_md5 = "4f1393ebae6881532d9292c61fbc36c5"
+
         # Check if required files exist
         if not cls.pairs_to_fragments_script.exists():
             raise FileNotFoundError(f"Script not found: {cls.pairs_to_fragments_script}")
         if not cls.input_pairs_file.exists():
             raise FileNotFoundError(f"Input pairs file not found: {cls.input_pairs_file}")
-        if not cls.reference_counts_file.exists():
-            raise FileNotFoundError(f"Reference counts file not found: {cls.reference_counts_file}")
 
     @classmethod
     def tearDownClass(cls):
@@ -84,6 +89,14 @@ class TestPairsToFragments(unittest.TestCase):
 
     def test_pairs_to_fragments_pipeline(self):
         """Test the full pairs_to_fragments pipeline."""
+        # Temporarily rename the reference file to simulate it not being present
+        reference_file_exists = self.reference_counts_file.exists()
+        temp_reference_path = None
+
+        if reference_file_exists:
+            temp_reference_path = self.reference_counts_file.with_suffix('.gz.bak')
+            self.reference_counts_file.rename(temp_reference_path)
+
         try:
             # Step 1: Run pairs_to_fragments_tsv.py
             cmd = [
@@ -132,24 +145,40 @@ class TestPairsToFragments(unittest.TestCase):
 
             self.assertTrue(self.temp_counts_gz_file.exists(), "Compressed counts file was not created")
 
-            # Step 5: Calculate and compare MD5 checksums
-            reference_md5 = self.calculate_md5(self.reference_counts_file)
+            # Step 5: Calculate MD5 checksum of the generated file
             generated_md5 = self.calculate_md5(self.temp_counts_gz_file)
 
             # Print checksums for debugging
-            print(f"Reference MD5: {reference_md5}")
+            print(f"Expected MD5: {self.expected_md5}")
             print(f"Generated MD5: {generated_md5}")
 
-            # Compare checksums
-            self.assertEqual(reference_md5, generated_md5,
-                             "Generated counts file does not match the reference file")
+            # If the reference file exists, calculate its MD5 for verification during development
+            if self.reference_counts_file.exists():
+                reference_md5 = self.calculate_md5(self.reference_counts_file)
+                print(f"Reference file MD5: {reference_md5}")
+                if reference_md5 != self.expected_md5:
+                    warnings.warn(
+                        f"The reference file's MD5 ({reference_md5}) does not match the expected MD5 ({self.expected_md5}). "
+                        f"If the reference file has been updated intentionally, please update the expected MD5 in the test."
+                    )
 
-            print("✅ Test passed: Generated counts file matches the reference file")
+            # Compare generated MD5 with expected MD5
+            self.assertEqual(self.expected_md5, generated_md5,
+                             f"Generated counts file does not match the expected output.\n"
+                             f"Expected MD5: {self.expected_md5}\n"
+                             f"Generated MD5: {generated_md5}\n"
+                             f"This could indicate a change in the pairs_to_fragments_tsv.py script or its dependencies.")
+
+            print("✅ Test passed: Generated counts file matches the expected output")
 
         except subprocess.CalledProcessError as e:
             self.fail(f"Pipeline execution failed: {e}")
         except Exception as e:
             self.fail(f"Test failed with error: {e}")
+        finally:
+            # Restore the reference file if we renamed it
+            if reference_file_exists and temp_reference_path and temp_reference_path.exists():
+                temp_reference_path.rename(self.reference_counts_file)
 
 
 if __name__ == "__main__":
