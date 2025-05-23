@@ -6,7 +6,7 @@ This toolkit provides tools for analyzing and modeling DNA footprints from Micro
 
 These steps preprocess Micro-C data to fragment counts. Counts are binned by fragment length and position (mid-point).
 
-### Create a virtual environment 
+### Create a virtual environment
 ```bash
 # Install dependencies for preprocessing and visualization
 conda env create -f footprint-tools-env.yaml
@@ -19,6 +19,7 @@ conda env create -f footprint-tools-env.yaml
 conda activate footprint-tools
 
 SAMPLE="test_data/mesc_microc_test"
+SAMPLE="/aryeelab/users/corri/data/Hansen_RCMC/MicroC_3hrDMSO"
 
 min_mapq=20
 chrom_sizes=test_data/mm10.chrom.sizes
@@ -28,7 +29,7 @@ pairtools parse --min-mapq ${min_mapq} --walks-policy 5unique --drop-sam \
     --max-inter-align-gap 30 --add-columns pos5,pos3 \
     --chroms-path ${chrom_sizes} | \
 pairtools sort | \
-pairtools dedup -o ${SAMPLE}.pairs 
+pairtools dedup -o ${SAMPLE}.pairs
 ```
 
 #### Step 2: Fragment pairs (.pairs) to fragment counts by position and length (.counts.tsv.gz)
@@ -60,24 +61,37 @@ The Step 2 preprocessing steps can be timed using the `code/time_preprocessing.p
 python code/time_preprocessing.py ${SAMPLE}.pairs --output temp.counts.tsv.gz
 ```
 
-### Visualizing footprints 
+### Visualizing footprints
 
-After preprocessing reads as above, footprints (i.e. smoothed fragment counts) can be visualized. The 2D matrix of counts (x:axis = genomic position, y:axis = fragment length) can be row normalized (scaled by the average count per position for that fragment length) and then smoothed with a Gaussian kernel (sigma = 10 by default). 
+After preprocessing reads as above, footprints (i.e. smoothed fragment counts) can be visualized. The 2D matrix of counts (x:axis = genomic position, y:axis = fragment length) can be row normalized (scaled by the average count per position for that fragment length) and then smoothed with a Gaussian kernel (sigma = 10 by default).
 
 ```bash
-# Plot with PRO-Cap data and markers
-python code/plot_region.py ${SAMPLE}.counts.tsv.gz \
-    --procap test_data/mesc_procap_test.bw \
-    --region chr8:23237000-23238000 \
-    --markers 23237668:Gins4_TSS \
-    --sigma 10 \
-    --output gins4_footprint.png \
-    --title "Gins4 TSS Footprint"
+# See footprinting.ipynb for examples
 ```
 
-## Exploratory predictive modeling of footprints -> PRO-Cap signal 
+### Statistical detection of footprints
 
-We are exploring building machine learning models to predict transcription initiation (PRO-Cap) signals from chromatin accessibility footprints.
+The toolkit includes functionality to detect and analyze "blobs" (regions of high signal intensity) in footprint matrices. This can be useful for identifying and characterizing specific patterns in the data, such as transcription factor binding sites or other regulatory elements.
+
+The blob detection algorithm:
+1. Applies Gaussian smoothing to the input matrix
+2. Creates a binary mask of regions above the threshold value
+3. Uses a watershed algorithm to separate adjacent blobs
+4. Calculates properties for each blob:
+   - Peak position (fragment_length, basepair_position)
+   - Size (number of pixels)
+   - Maximum signal intensity
+   - Mean signal intensity
+   - Total signal (sum of all intensity values)
+
+```bash
+# See footprinting.ipynb for examples
+```
+
+
+## Exploratory predictive modeling of footprints -> PRO-Cap signal
+
+We are exploring building machine learning models to predict transcription initiation (PRO-Cap) signals from chromatin accessibility footprints. [VERY EXPERIMENTAL!]
 
 ### Install dependencies (within a virtual environment)
 ```bash
@@ -86,15 +100,14 @@ pip install torch pytorch-lightning
 pip install pandas numpy matplotlib seaborn
 pip install wandb
 pip install pysam pyBigWig bioframe biopython
-pip install scikit-learn
+pip install scikit-learn scikit-image
 ```
 
 ### Run the notebook
-Model training is being developed in the Jupyter notebook:
 ```bash
-jupyter notebook code/footprint_to_procap.ipynb
+See footprinting-to-procap.ipynb for examples
 ```
 
 
 
-    
+
