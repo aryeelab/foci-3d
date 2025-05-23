@@ -89,13 +89,9 @@ class TestPairsToFragments(unittest.TestCase):
 
     def test_pairs_to_fragments_pipeline(self):
         """Test the full pairs_to_fragments pipeline."""
-        # Temporarily rename the reference file to simulate it not being present
-        reference_file_exists = self.reference_counts_file.exists()
-        temp_reference_path = None
-
-        if reference_file_exists:
-            temp_reference_path = self.reference_counts_file.with_suffix('.gz.bak')
-            self.reference_counts_file.rename(temp_reference_path)
+        # For debugging purposes, we'll make sure the reference file is available
+        if not self.reference_counts_file.exists():
+            print(f"Warning: Reference file {self.reference_counts_file} does not exist. Comparison will be skipped.", file=sys.stderr)
 
         try:
             # Step 1: Run pairs_to_fragments_tsv.py
@@ -130,6 +126,16 @@ class TestPairsToFragments(unittest.TestCase):
             subprocess.run(count_cmd, shell=True, check=True)
             self.assertTrue(self.temp_counts_file.exists(), "Counts file was not created")
 
+            # Print the contents of the temp_counts_file for debugging
+            print("Contents of temp_counts_file:")
+            with open(self.temp_counts_file, 'r') as f:
+                lines = f.readlines()
+                print(f"temp_counts_file has {len(lines)} lines")
+                for i in range(min(5, len(lines))):
+                    print(f"  {lines[i].strip()}")
+                if len(lines) > 0:
+                    print(f"  Last line: {lines[-1].strip()}")
+
             # Step 4: Compress with bgzip or gzip
             if self.check_command_exists("bgzip"):
                 # Use bgzip if available (preferred for genomic data)
@@ -162,6 +168,53 @@ class TestPairsToFragments(unittest.TestCase):
                         f"If the reference file has been updated intentionally, please update the expected MD5 in the test."
                     )
 
+                # Compare the content of the files for debugging
+                print("Comparing file contents for debugging:")
+                with gzip.open(self.reference_counts_file, 'rt') as ref_file, gzip.open(self.temp_counts_gz_file, 'rt') as gen_file:
+                    ref_lines = ref_file.readlines()
+                    gen_lines = gen_file.readlines()
+
+                    print(f"Reference file has {len(ref_lines)} lines")
+                    print(f"Generated file has {len(gen_lines)} lines")
+
+                    # Compare the first few lines
+                    print("First 5 lines of reference file:")
+                    for i in range(min(5, len(ref_lines))):
+                        print(f"  {ref_lines[i].strip()}")
+
+                    print("First 5 lines of generated file:")
+                    for i in range(min(5, len(gen_lines))):
+                        print(f"  {gen_lines[i].strip()}")
+
+                    # Compare a few random lines
+                    if len(ref_lines) > 10 and len(gen_lines) > 10:
+                        print("Line 10 comparison:")
+                        print(f"  Ref: {ref_lines[10].strip()}")
+                        print(f"  Gen: {gen_lines[10].strip()}")
+
+                    if len(ref_lines) > 100 and len(gen_lines) > 100:
+                        print("Line 100 comparison:")
+                        print(f"  Ref: {ref_lines[100].strip()}")
+                        print(f"  Gen: {gen_lines[100].strip()}")
+
+                    # Find the first difference
+                    min_len = min(len(ref_lines), len(gen_lines))
+                    for i in range(min_len):
+                        if ref_lines[i].strip() != gen_lines[i].strip():
+                            print(f"First difference at line {i+1}:")
+                            print(f"  Ref: {ref_lines[i].strip()}")
+                            print(f"  Gen: {gen_lines[i].strip()}")
+                            break
+                    else:
+                        if len(ref_lines) != len(gen_lines):
+                            print(f"Files have different lengths. Extra lines in {'reference' if len(ref_lines) > len(gen_lines) else 'generated'} file:")
+                            if len(ref_lines) > len(gen_lines):
+                                for i in range(len(gen_lines), min(len(gen_lines) + 5, len(ref_lines))):
+                                    print(f"  Ref line {i+1}: {ref_lines[i].strip()}")
+                            else:
+                                for i in range(len(ref_lines), min(len(ref_lines) + 5, len(gen_lines))):
+                                    print(f"  Gen line {i+1}: {gen_lines[i].strip()}")
+
             # Compare generated MD5 with expected MD5
             self.assertEqual(self.expected_md5, generated_md5,
                              f"Generated counts file does not match the expected output.\n"
@@ -176,9 +229,8 @@ class TestPairsToFragments(unittest.TestCase):
         except Exception as e:
             self.fail(f"Test failed with error: {e}")
         finally:
-            # Restore the reference file if we renamed it
-            if reference_file_exists and temp_reference_path and temp_reference_path.exists():
-                temp_reference_path.rename(self.reference_counts_file)
+            # If we had renamed the reference file, we would restore it here
+            pass
 
 
 if __name__ == "__main__":
