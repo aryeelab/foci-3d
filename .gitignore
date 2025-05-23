@@ -1,2 +1,5 @@
 *.ckpt
 .DS_Store
+*/wandb/*
+data/*
+plots/*
