@@ -61,6 +61,21 @@ The Step 2 preprocessing steps can be timed using the `code/time_preprocessing.p
 python code/time_preprocessing.py ${SAMPLE}.pairs --output temp.counts.tsv.gz
 ```
 
+### Testing
+
+To run the test suite:
+
+```bash
+# Activate the footprint-tools environment
+conda activate footprint-tools
+
+# Run all tests
+cd tests
+python3 run_tests.py
+```
+
+See the [tests/README.md](tests/README.md) file for more information on running and adding tests.
+
 ### Visualizing footprints
 
 After preprocessing reads as above, footprints (i.e. smoothed fragment counts) can be visualized. The 2D matrix of counts (x:axis = genomic position, y:axis = fragment length) can be row normalized (scaled by the average count per position for that fragment length) and then smoothed with a Gaussian kernel (sigma = 10 by default).
@@ -87,6 +102,20 @@ The blob detection algorithm:
 ```bash
 # See footprinting.ipynb for examples
 ```
+
+### Unit tests
+
+To run the test suite:
+```bash
+# Activate the footprint-tools environment
+conda activate footprint-tools
+
+# Run all tests
+cd tests
+python3 run_tests.py
+```
+
+See `tests/README.md` for more information on running and adding tests.
 
 
 ## Exploratory predictive modeling of footprints -> PRO-Cap signal
