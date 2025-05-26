@@ -256,17 +256,18 @@ python code/detect_footprints.py -i large_dataset.counts.tsv.gz -o footprints.ts
 ```
 
 **Output format:**
-The script outputs a TSV file with the following columns:
+The script outputs a compact TSV file with the following columns:
 - `chrom`: Chromosome name
 - `position`: Genomic position of footprint peak
 - `fragment_length`: Fragment length at peak intensity
-- `size`: Size of footprint in pixels
-- `max_signal`: Maximum signal intensity
-- `mean_signal`: Average signal intensity
-- `total_signal`: Total signal (sum of intensities)
-- `window_start`, `window_end`: Processing window coordinates
-- `p_value`: Statistical significance (if calculated)
-- `q_value`: FDR-corrected p-value (if calculated)
+- `size`: Size of footprint in pixels (rounded to 1 decimal place)
+- `max_signal`: Maximum signal intensity (rounded to 1 decimal place)
+- `mean_signal`: Average signal intensity (rounded to 1 decimal place)
+- `total_signal`: Total signal (sum of intensities, rounded to 1 decimal place)
+- `p_value`: Statistical significance (full precision, if calculated)
+- `q_value`: FDR-corrected p-value (full precision, if calculated)
+
+Note: The `window_start` and `window_end` columns have been removed to reduce file size, as these are internal processing details not needed for downstream analysis.
 
 For interactive analysis and visualization, see `footprinting.ipynb`.
 

@@ -477,6 +477,61 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
     return final_results
 
 
+def format_output_dataframe(footprints):
+    """
+    Format the footprints DataFrame for compact output by:
+    1. Removing window_start and window_end columns
+    2. Rounding numeric columns to 1 decimal place
+    3. Preserving p_value and q_value precision
+
+    Parameters
+    ----------
+    footprints : pd.DataFrame
+        Input footprints DataFrame
+
+    Returns
+    -------
+    pd.DataFrame
+        Formatted DataFrame ready for output
+    """
+    if footprints.empty:
+        # Return empty DataFrame with correct column structure
+        return pd.DataFrame(columns=[
+            'chrom', 'position', 'fragment_length', 'size', 'max_signal',
+            'mean_signal', 'total_signal', 'p_value', 'q_value'
+        ])
+
+    # Make a copy to avoid modifying the original
+    formatted = footprints.copy()
+
+    # Remove window columns if they exist
+    columns_to_remove = ['window_start', 'window_end']
+    for col in columns_to_remove:
+        if col in formatted.columns:
+            formatted = formatted.drop(columns=[col])
+
+    # Round numeric columns to 1 decimal place
+    numeric_columns_to_round = ['size', 'max_signal', 'mean_signal', 'total_signal']
+    for col in numeric_columns_to_round:
+        if col in formatted.columns:
+            formatted[col] = formatted[col].round(1)
+
+    # Ensure column order (p_value and q_value may not always be present)
+    base_columns = ['chrom', 'position', 'fragment_length', 'size', 'max_signal', 'mean_signal', 'total_signal']
+    stat_columns = []
+    if 'p_value' in formatted.columns:
+        stat_columns.append('p_value')
+    if 'q_value' in formatted.columns:
+        stat_columns.append('q_value')
+
+    column_order = base_columns + stat_columns
+    # Only include columns that actually exist in the DataFrame
+    column_order = [col for col in column_order if col in formatted.columns]
+    formatted = formatted[column_order]
+
+    return formatted
+
+
 def calculate_pvalues_weibull(footprints, threshold=10.0, timing_stats=None):
     """
     Calculate p-values and q-values using Weibull distribution fitting.
@@ -889,11 +944,14 @@ Examples:
         elif 'q_value' not in footprints.columns:
             print(f"Saving all {len(footprints):,} detected footprints (no q-value filtering - q-values not calculated)")
 
+    # Format output for compact file size
+    formatted_footprints = format_output_dataframe(footprints)
+
     # Save results
     if timing_stats:
         timing_stats.start_timer("Saving results")
-    print(f"Saving {len(footprints):,} footprints to {args.output}")
-    footprints.to_csv(args.output, sep='\t', index=False)
+    print(f"Saving {len(formatted_footprints):,} footprints to {args.output}")
+    formatted_footprints.to_csv(args.output, sep='\t', index=False)
     if timing_stats:
         timing_stats.end_timer("Saving results")
 
