@@ -167,11 +167,27 @@ python code/detect_footprints.py -i data/large_dataset.counts.tsv.gz -o footprin
 # Custom memory limit and batch size
 python code/detect_footprints.py -i data/large_dataset.counts.tsv.gz -o footprints.tsv \
     --max-memory-gb 16 --batch-size 1000 --num-cores 6
+
+# Filter footprints by q-value (FDR) threshold - default 10% FDR
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8
+
+# Use stricter 5% FDR threshold
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
+    --qcutoff 0.05
+
+# Use more lenient 20% FDR threshold
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
+    --qcutoff 0.2
+
+# Very strict filtering (0.1% FDR)
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
+    --qcutoff 0.001
 ```
 
 **Key features:**
 - **Region specification**: Support for whole chromosomes (`chr1,chr2`) or coordinate ranges (`chr1:1000000-2000000`)
 - **Statistical testing**: Automatic p-value and q-value calculation using Weibull distribution fitting
+- **Q-value filtering**: Customizable FDR thresholds with `--qcutoff` for controlling statistical stringency
 - **Parallel processing**: Multi-core support for faster processing of large datasets
 - **Memory management**: Intelligent batching and memory monitoring for large datasets (M1 Mac optimized)
 - **Normalization**: Automatic calculation or loading of fragment length-specific normalization factors

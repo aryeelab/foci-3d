@@ -612,6 +612,12 @@ Examples:
 
   # Custom memory limit
   %(prog)s -i data/large_dataset.counts.tsv.gz -o footprints.tsv --max-memory-gb 16 --batch-size 2000
+
+  # Filter footprints by q-value (FDR) threshold
+  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --qcutoff 0.05
+
+  # Use more lenient FDR threshold
+  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --qcutoff 0.2
         """)
 
     # Required arguments
@@ -667,6 +673,10 @@ Examples:
     # Statistical testing
     parser.add_argument('--skip-pvalues', action='store_true',
                         help='Skip p-value and q-value calculation')
+    parser.add_argument('--qcutoff', type=float, default=0.1,
+                        help='Q-value (FDR) threshold for filtering footprints (default: 0.1 for 10%% FDR). '
+                             'Only footprints with q_value <= qcutoff will be saved. '
+                             'Ignored if --skip-pvalues is used.')
 
     # Timing and statistics
     parser.add_argument('--timing', action='store_true',
@@ -846,10 +856,43 @@ Examples:
     if not args.skip_pvalues and not footprints.empty:
         footprints = calculate_pvalues_weibull(footprints, threshold=args.threshold, timing_stats=timing_stats)
 
+    # Apply q-value filtering if p-values were calculated
+    if not args.skip_pvalues and not footprints.empty and 'q_value' in footprints.columns:
+        # Filter footprints based on q-value threshold
+        footprints_filtered = footprints[footprints['q_value'] <= args.qcutoff]
+
+        # Report filtering statistics
+        n_passed = len(footprints_filtered)
+        n_total = len(footprints)
+        print(f"Q-value filtering (FDR <= {args.qcutoff:.3f}): {n_passed:,} of {n_total:,} footprints passed ({n_passed/n_total*100:.1f}%)")
+
+        # Update timing statistics
+        if timing_stats:
+            timing_stats.add_stat("Total footprints before filtering", n_total)
+            timing_stats.add_stat("Footprints passing q-value filter", n_passed)
+            timing_stats.add_stat("Q-value threshold used", args.qcutoff)
+            timing_stats.add_stat("Percentage passing filter", n_passed/n_total*100 if n_total > 0 else 0)
+
+        # Use filtered results
+        footprints = footprints_filtered
+
+        # Handle case where no footprints pass the threshold
+        if footprints.empty:
+            print(f"Warning: No footprints passed the q-value threshold of {args.qcutoff:.3f}")
+            print("Consider using a more lenient threshold (higher --qcutoff value) or check your data.")
+    else:
+        # No filtering applied
+        if args.skip_pvalues:
+            print(f"Saving all {len(footprints):,} detected footprints (no q-value filtering - p-values skipped)")
+        elif footprints.empty:
+            print("No footprints detected to filter")
+        elif 'q_value' not in footprints.columns:
+            print(f"Saving all {len(footprints):,} detected footprints (no q-value filtering - q-values not calculated)")
+
     # Save results
     if timing_stats:
         timing_stats.start_timer("Saving results")
-    print(f"Saving {len(footprints)} detected footprints to {args.output}")
+    print(f"Saving {len(footprints):,} footprints to {args.output}")
     footprints.to_csv(args.output, sep='\t', index=False)
     if timing_stats:
         timing_stats.end_timer("Saving results")
