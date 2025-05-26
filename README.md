@@ -159,12 +159,21 @@ python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o 
 # Enable verbose output with step-by-step timing
 python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
     --verbose
+
+# Memory management for large datasets (recommended for >100k windows)
+python code/detect_footprints.py -i data/large_dataset.counts.tsv.gz -o footprints.tsv \
+    --low-memory --batch-size 500 --num-cores 4 --timing
+
+# Custom memory limit and batch size
+python code/detect_footprints.py -i data/large_dataset.counts.tsv.gz -o footprints.tsv \
+    --max-memory-gb 16 --batch-size 1000 --num-cores 6
 ```
 
 **Key features:**
 - **Region specification**: Support for whole chromosomes (`chr1,chr2`) or coordinate ranges (`chr1:1000000-2000000`)
 - **Statistical testing**: Automatic p-value and q-value calculation using Weibull distribution fitting
 - **Parallel processing**: Multi-core support for faster processing of large datasets
+- **Memory management**: Intelligent batching and memory monitoring for large datasets (M1 Mac optimized)
 - **Normalization**: Automatic calculation or loading of fragment length-specific normalization factors
 - **Flexible parameters**: Adjustable detection thresholds, smoothing, and fragment length ranges
 - **Performance monitoring**: Comprehensive timing and processing statistics with `--timing` and `--verbose` options
@@ -203,6 +212,31 @@ Processing Statistics:
   Significant footprints (5% FDR): 1
   Peak memory usage             : 283.8 MB
 ============================================================
+```
+
+**Memory Management for Large Datasets:**
+The script includes intelligent memory management features specifically designed for processing large genomic datasets on systems with limited memory (e.g., M1 Macs):
+
+- **Automatic memory detection**: Auto-detects available system memory and sets conservative limits
+- **Adaptive batch sizing**: Dynamically adjusts batch sizes based on available memory and dataset size
+- **Low-memory mode**: `--low-memory` flag enables conservative settings (smaller batches, fewer cores)
+- **Custom memory limits**: `--max-memory-gb` allows manual memory limit specification
+- **Batch processing**: `--batch-size` controls how many windows are processed simultaneously
+- **Memory monitoring**: Real-time memory usage tracking and garbage collection between batches
+
+**Recommended settings for large datasets:**
+```bash
+# For datasets with >100,000 windows (typical whole-genome analysis)
+python code/detect_footprints.py -i large_dataset.counts.tsv.gz -o footprints.tsv \
+    --low-memory --batch-size 500 --num-cores 4 --timing
+
+# For M1 Macs with 16GB RAM
+python code/detect_footprints.py -i large_dataset.counts.tsv.gz -o footprints.tsv \
+    --max-memory-gb 12 --batch-size 1000 --num-cores 6
+
+# For systems with limited memory
+python code/detect_footprints.py -i large_dataset.counts.tsv.gz -o footprints.tsv \
+    --low-memory --batch-size 100 --num-cores 2
 ```
 
 **Output format:**

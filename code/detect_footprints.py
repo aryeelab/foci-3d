@@ -285,6 +285,198 @@ def calculate_normalization_factors(counts_gz, chromosomes, gap_thresh=5000, out
     return final_avg_by_len
 
 
+def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, sigma, min_size,
+                             fragment_len_min, fragment_len_max, scale_factor_dict, num_cores,
+                             batch_size=1000, max_memory_gb=8.0, timing_stats=None):
+    """
+    Memory-aware wrapper for detect_footprints that processes windows in batches.
+
+    This function splits the window processing into smaller batches to avoid memory issues
+    with very large datasets, especially on M1 Macs with limited memory.
+    """
+    from footprinting import get_valid_windows
+    from tqdm import tqdm
+    import gc
+
+    # Get all valid windows first
+    print("Getting valid windows...")
+    all_windows = get_valid_windows(
+        counts_gz=counts_gz,
+        chromosomes=chromosomes,
+        window_size=window_size
+    )
+
+    total_windows = len(all_windows)
+    print(f"Found {total_windows} windows.")
+
+    if total_windows == 0:
+        return pd.DataFrame(columns=[
+            'chrom', 'position', 'fragment_length', 'size', 'max_signal',
+            'mean_signal', 'total_signal', 'window_start', 'window_end'
+        ])
+
+    # Adaptive batch sizing based on memory constraints
+    if PSUTIL_AVAILABLE:
+        # Monitor memory and adjust batch size dynamically
+        current_memory_gb = psutil.virtual_memory().used / (1024**3)
+        available_memory_gb = max_memory_gb - current_memory_gb
+
+        # Estimate memory per window (rough heuristic)
+        estimated_memory_per_window_mb = 2.0  # Conservative estimate
+        max_windows_for_memory = int((available_memory_gb * 1024) / estimated_memory_per_window_mb)
+
+        # Adjust batch size based on available memory and cores
+        adaptive_batch_size = min(batch_size, max_windows_for_memory // num_cores, total_windows)
+        adaptive_batch_size = max(adaptive_batch_size, 10)  # Minimum batch size
+
+        if adaptive_batch_size != batch_size:
+            print(f"Adjusted batch size from {batch_size} to {adaptive_batch_size} based on available memory")
+            batch_size = adaptive_batch_size
+
+    # Process windows in batches
+    all_results = []
+    num_batches = (total_windows + batch_size - 1) // batch_size
+
+    print(f"Processing {total_windows} windows in {num_batches} batches of ~{batch_size} windows each")
+
+    # Initialize overall progress bar
+    overall_progress = tqdm(total=total_windows, desc="Processing windows", unit="windows")
+
+    for batch_idx in range(num_batches):
+        start_idx = batch_idx * batch_size
+        end_idx = min(start_idx + batch_size, total_windows)
+        batch_windows = all_windows[start_idx:end_idx]
+
+        print(f"Processing batch {batch_idx + 1}/{num_batches} ({len(batch_windows)} windows)...")
+
+        # Monitor memory before processing batch
+        if PSUTIL_AVAILABLE:
+            memory_before = psutil.virtual_memory().used / (1024**3)
+            if timing_stats:
+                timing_stats.add_stat(f"Memory before batch {batch_idx + 1} (GB)", memory_before)
+
+        try:
+            # Use the original detect_footprints function but with the batch of windows
+            # We'll call the internal processing function directly
+            from footprinting import detect_footprints
+
+            # Temporarily replace the windows in the function by monkey-patching
+            # This is a bit hacky but avoids duplicating the entire function
+            original_get_valid_windows = None
+            try:
+                import footprinting
+                original_get_valid_windows = footprinting.get_valid_windows
+
+                # Create a mock function that returns our batch
+                def mock_get_valid_windows(*args, **kwargs):
+                    return batch_windows
+
+                footprinting.get_valid_windows = mock_get_valid_windows
+
+                # Monkey patch the tqdm in footprinting to update our overall progress
+                original_tqdm = None
+                try:
+                    import footprinting
+                    original_tqdm = footprinting.tqdm
+
+                    # Create a custom tqdm that updates our overall progress
+                    class GlobalProgressTqdm:
+                        def __init__(self, iterable=None, desc=None, total=None, unit=None, **kwargs):
+                            self.iterable = iterable
+                            self.total = total or (len(iterable) if iterable else 0)
+                            self.desc = desc
+                            self.unit = unit
+                            self.n = 0
+
+                        def __iter__(self):
+                            if self.iterable:
+                                for item in self.iterable:
+                                    yield item
+                                    self.update(1)
+
+                        def update(self, n=1):
+                            self.n += n
+                            # Update our overall progress bar instead of showing per-batch progress
+                            overall_progress.update(n)
+
+                        def close(self):
+                            pass
+
+                        def __enter__(self):
+                            return self
+
+                        def __exit__(self, *args):
+                            self.close()
+
+                    # Replace tqdm in footprinting module
+                    footprinting.tqdm = GlobalProgressTqdm
+
+                    # Now call detect_footprints which will use our batch and progress tracking
+                    batch_results = detect_footprints(
+                        counts_gz=counts_gz,
+                        chromosomes=chromosomes,  # This will be ignored due to our mock
+                        window_size=window_size,
+                        threshold=threshold,
+                        sigma=sigma,
+                        min_size=min_size,
+                        fragment_len_min=fragment_len_min,
+                        fragment_len_max=fragment_len_max,
+                        scale_factor_dict=scale_factor_dict,
+                        num_cores=num_cores
+                    )
+
+                finally:
+                    # Restore the original tqdm
+                    if original_tqdm:
+                        footprinting.tqdm = original_tqdm
+
+            finally:
+                # Restore the original function
+                if original_get_valid_windows:
+                    footprinting.get_valid_windows = original_get_valid_windows
+
+            if not batch_results.empty:
+                all_results.append(batch_results)
+
+        except Exception as e:
+            print(f"Error processing batch {batch_idx + 1}: {e}")
+            # Still update progress bar even if batch failed
+            overall_progress.update(len(batch_windows))
+            continue
+
+        # Monitor memory after processing batch and force garbage collection
+        if PSUTIL_AVAILABLE:
+            memory_after = psutil.virtual_memory().used / (1024**3)
+            memory_increase = memory_after - memory_before
+            if timing_stats:
+                timing_stats.add_stat(f"Memory after batch {batch_idx + 1} (GB)", memory_after)
+                timing_stats.add_stat(f"Memory increase batch {batch_idx + 1} (GB)", memory_increase)
+
+            # If memory usage is getting high, force garbage collection
+            if memory_after > max_memory_gb * 0.8:
+                print(f"Memory usage high ({memory_after:.1f} GB), forcing garbage collection...")
+                gc.collect()
+
+        # Force garbage collection between batches to free memory
+        gc.collect()
+
+    # Close the overall progress bar
+    overall_progress.close()
+
+    # Combine all results
+    if all_results:
+        final_results = pd.concat(all_results, ignore_index=True)
+        print(f"Detected {len(final_results)} footprints across {total_windows} windows in {num_batches} batches.")
+    else:
+        final_results = pd.DataFrame(columns=[
+            'chrom', 'position', 'fragment_length', 'size', 'max_signal',
+            'mean_signal', 'total_signal', 'window_start', 'window_end'
+        ])
+        print("No footprints detected.")
+
+    return final_results
+
+
 def calculate_pvalues_weibull(footprints, threshold=10.0, timing_stats=None):
     """
     Calculate p-values and q-values using Weibull distribution fitting.
@@ -414,6 +606,12 @@ Examples:
 
   # Enable verbose output with step-by-step timing
   %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --verbose
+
+  # Memory management for large datasets
+  %(prog)s -i data/large_dataset.counts.tsv.gz -o footprints.tsv --low-memory --batch-size 500 --num-cores 4
+
+  # Custom memory limit
+  %(prog)s -i data/large_dataset.counts.tsv.gz -o footprints.tsv --max-memory-gb 16 --batch-size 2000
         """)
 
     # Required arguments
@@ -458,6 +656,14 @@ Examples:
     parser.add_argument('--gap-thresh', type=int, default=5000,
                         help='Maximum allowed gap between data points for normalization calculation (default: 5000)')
 
+    # Memory management parameters
+    parser.add_argument('--batch-size', type=int, default=1000,
+                        help='Number of windows to process in each batch (default: 1000, reduce for memory issues)')
+    parser.add_argument('--max-memory-gb', type=float, default=None,
+                        help='Maximum memory usage in GB before reducing batch size (default: auto-detect)')
+    parser.add_argument('--low-memory', action='store_true',
+                        help='Enable low-memory mode (smaller batches, more conservative processing)')
+
     # Statistical testing
     parser.add_argument('--skip-pvalues', action='store_true',
                         help='Skip p-value and q-value calculation')
@@ -473,6 +679,32 @@ Examples:
     # Initialize timing statistics
     show_timing = args.timing or args.verbose
     timing_stats = TimingStats(verbose=args.verbose) if show_timing else None
+
+    # Configure memory management
+    if args.low_memory:
+        # Conservative settings for low-memory mode
+        batch_size = min(args.batch_size, 100)
+        if args.num_cores > 2:
+            print(f"Low-memory mode: reducing cores from {args.num_cores} to 2")
+            args.num_cores = 2
+    else:
+        batch_size = args.batch_size
+
+    # Auto-detect memory limits for M1 Macs
+    if args.max_memory_gb is None:
+        if PSUTIL_AVAILABLE:
+            total_memory_gb = psutil.virtual_memory().total / (1024**3)
+            # Use 70% of available memory as a conservative limit
+            max_memory_gb = total_memory_gb * 0.7
+            print(f"Auto-detected memory limit: {max_memory_gb:.1f} GB (70% of {total_memory_gb:.1f} GB total)")
+        else:
+            # Conservative default for M1 Macs
+            max_memory_gb = 8.0
+            print(f"Using default memory limit: {max_memory_gb} GB (install psutil for auto-detection)")
+    else:
+        max_memory_gb = args.max_memory_gb
+
+    print(f"Memory management: batch_size={batch_size}, max_memory={max_memory_gb:.1f}GB, cores={args.num_cores}")
 
     # Validate input file
     if not os.path.exists(args.input):
@@ -558,12 +790,12 @@ Examples:
 
     print(f"Using normalization factors for {len(scale_factor_dict)} fragment lengths")
 
-    # Detect footprints
+    # Detect footprints using memory-aware batched processing
     if timing_stats:
         timing_stats.start_timer("Footprint detection")
     print("Detecting footprints...")
     try:
-        footprints = detect_footprints(
+        footprints = detect_footprints_batched(
             counts_gz=args.input,
             chromosomes=chromosomes,
             window_size=args.window_size,
@@ -573,7 +805,10 @@ Examples:
             fragment_len_min=args.fragment_len_min,
             fragment_len_max=args.fragment_len_max,
             scale_factor_dict=scale_factor_dict,
-            num_cores=args.num_cores
+            num_cores=args.num_cores,
+            batch_size=batch_size,
+            max_memory_gb=max_memory_gb,
+            timing_stats=timing_stats
         )
 
         # Handle case where no footprints are detected
