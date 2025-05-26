@@ -373,11 +373,15 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
 
                 footprinting.get_valid_windows = mock_get_valid_windows
 
-                # Monkey patch the tqdm in footprinting to update our overall progress
+                # Monkey patch the tqdm and print statements in footprinting to update our overall progress
+                # and suppress redundant console output
                 original_tqdm = None
+                original_print = None
                 try:
                     import footprinting
+                    import builtins
                     original_tqdm = footprinting.tqdm
+                    original_print = builtins.print
 
                     # Create a custom tqdm that updates our overall progress
                     class GlobalProgressTqdm:
@@ -408,8 +412,22 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
                         def __exit__(self, *args):
                             self.close()
 
-                    # Replace tqdm in footprinting module
+                    # Create a custom print function that suppresses specific messages
+                    def selective_print(*args, **kwargs):
+                        # Convert args to string to check content
+                        message = ' '.join(str(arg) for arg in args)
+
+                        # Suppress these specific redundant messages during batch processing
+                        if (message.startswith("Getting valid windows...") or
+                            message.startswith("Processing ") and "windows using" in message and "cores..." in message):
+                            return  # Suppress these messages
+
+                        # Allow all other print statements to go through
+                        original_print(*args, **kwargs)
+
+                    # Replace tqdm and print in footprinting module
                     footprinting.tqdm = GlobalProgressTqdm
+                    builtins.print = selective_print
 
                     # Now call detect_footprints which will use our batch and progress tracking
                     batch_results = detect_footprints(
@@ -426,9 +444,11 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
                     )
 
                 finally:
-                    # Restore the original tqdm
+                    # Restore the original tqdm and print
                     if original_tqdm:
                         footprinting.tqdm = original_tqdm
+                    if original_print:
+                        builtins.print = original_print
 
             finally:
                 # Restore the original function
