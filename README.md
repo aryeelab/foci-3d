@@ -64,6 +64,28 @@ The Step 2 preprocessing steps can be timed using the `code/time_preprocessing.p
 python code/time_preprocessing.py ${SAMPLE}.pairs --output temp.counts.tsv.gz
 ```
 
+Example timing output:
+```
+Processing Summary:
+  Input pairs file: data/MicroC_3hrDMSO.mapped.pairs
+  Output counts file: temp.counts.tsv.gz
+  Fragments processed: 4377599010
+
+Timing Summary:
+  Pairs To Fragments: 11138.49 seconds (63.4%)
+  Sort Fragments: 3548.80 seconds (20.2%)
+  Count Fragments: 1462.29 seconds (8.3%)
+  Bgzip: 1024.17 seconds (5.8%)
+  Tabix: 378.32 seconds (2.2%)
+  Copy Output: 27.13 seconds (0.2%)
+  Total Processing Time: 17579.21 seconds
+  Total Elapsed Time: 18217.97 seconds
+
+Cleaning up temporary files...
+Running cleanup...
+  Completed in 36.63 seconds
+```
+
 ### Testing
 
 To run the test suite:
