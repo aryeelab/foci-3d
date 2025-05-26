@@ -19,7 +19,8 @@ conda env create -f footprint-tools-env.yaml
 conda activate footprint-tools
 
 SAMPLE="test_data/mesc_microc_test"
-SAMPLE="/aryeelab/users/corri/data/Hansen_RCMC/MicroC_3hrDMSO"
+#SAMPLE="/aryeelab/users/corri/data/Hansen_RCMC/MicroC_3hrDMSO"
+#SAMPLE="data/MicroC_3hrDMSO"
 
 min_mapq=20
 chrom_sizes=test_data/mm10.chrom.sizes
@@ -34,7 +35,7 @@ pairtools dedup -o ${SAMPLE}.pairs
 
 #### Step 2: Fragment pairs (.pairs) to fragment counts by position and length (.counts.tsv.gz)
 ```bash
-# Computes a sparse matrix of fragment counts per chrom, midpoint, length bin
+n# Computes a sparse matrix of fragment counts per chrom, midpoint, length bin
 # Output is a TSV of chrom \t pos \t fragment_length \t count
 # This file is bgzip compressed and tabix indexed
 
@@ -51,6 +52,8 @@ uniq -c ${SAMPLE}.fragments.sorted.tsv | awk -v OFS='\t' '{print $2, $3, $4, $1}
 # Convert the counts file to tabix format
 bgzip -c ${SAMPLE}.counts.tsv > ${SAMPLE}.counts.tsv.gz
 tabix -s 1 -b 2 -e 2 ${SAMPLE}.counts.tsv.gz
+
+date
 
 # Remove temp files
 rm ${SAMPLE}.fragments.tsv ${SAMPLE}.fragments.sorted.tsv ${SAMPLE}.counts.tsv
@@ -84,9 +87,7 @@ After preprocessing reads as above, footprints (i.e. smoothed fragment counts) c
 # See footprinting.ipynb for examples
 ```
 
-### Statistical detection of footprints
-
-The toolkit includes functionality to detect and analyze "blobs" (regions of high signal intensity) in footprint matrices. This can be useful for identifying and characterizing specific patterns in the data, such as transcription factor binding sites or other regulatory elements.
+#### Command line footprint detection
 
 The blob detection algorithm:
 1. Applies Gaussian smoothing to the input matrix
@@ -99,9 +100,103 @@ The blob detection algorithm:
    - Mean signal intensity
    - Total signal (sum of all intensity values)
 
+
+The `detect_footprints.py` script provides a command line interface for batch footprint detection with statistical significance testing:
+
 ```bash
-# See footprinting.ipynb for examples
+
+# Basic usage: Process all chromosomes
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv
+
+# Process specific chromosomes
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8
+
+# Process specific genomic regions
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8:22000000-23000000
+
+# Adjust detection parameters
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
+    --threshold 15.0 --sigma 2.0 --min-size 10 --num-cores 4
+
+# Use pre-calculated normalization factors
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
+    --norm-factors norm_factors.pkl
+
+# Save normalization factors for future use
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
+    --save-norm-factors norm_factors.pkl
+
+# Skip statistical significance testing (faster)
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
+    --skip-pvalues
+
+# Enable detailed timing and performance statistics
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
+    --timing
+
+# Enable verbose output with step-by-step timing
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
+    --verbose
 ```
+
+**Key features:**
+- **Region specification**: Support for whole chromosomes (`chr1,chr2`) or coordinate ranges (`chr1:1000000-2000000`)
+- **Statistical testing**: Automatic p-value and q-value calculation using Weibull distribution fitting
+- **Parallel processing**: Multi-core support for faster processing of large datasets
+- **Normalization**: Automatic calculation or loading of fragment length-specific normalization factors
+- **Flexible parameters**: Adjustable detection thresholds, smoothing, and fragment length ranges
+- **Performance monitoring**: Comprehensive timing and processing statistics with `--timing` and `--verbose` options
+
+**Timing and Performance Features:**
+The script includes comprehensive timing and performance monitoring capabilities:
+- **Detailed timing**: Track time spent in each processing step (normalization, detection, p-value calculation, I/O)
+- **Processing statistics**: Report window counts, base pairs processed, footprints per Kb, and memory usage
+- **Verbose mode**: Step-by-step timing output with `--verbose` flag
+- **Summary report**: Consolidated timing and statistics summary with `--timing` flag
+- **Memory monitoring**: Peak memory usage tracking (requires psutil package)
+
+Example timing output:
+```
+============================================================
+PROCESSING SUMMARY
+============================================================
+
+Timing Information:
+------------------------------
+  Region parsing and validation : 0.000s
+  Normalization factor calculation: 0.186s
+  Footprint detection           : 0.162s
+  P-value calculation           : 0.018s
+  Saving results                : 0.007s
+  Total execution time          : 0.374s
+
+Processing Statistics:
+------------------------------
+  Window size (bp)              : 10,000
+  Number of regions             : 1
+  Total base pairs in regions   : 200,000
+  Estimated processing windows  : 20
+  Total footprints detected     : 52
+  Footprints per Kb             : 0.260
+  Significant footprints (5% FDR): 1
+  Peak memory usage             : 283.8 MB
+============================================================
+```
+
+**Output format:**
+The script outputs a TSV file with the following columns:
+- `chrom`: Chromosome name
+- `position`: Genomic position of footprint peak
+- `fragment_length`: Fragment length at peak intensity
+- `size`: Size of footprint in pixels
+- `max_signal`: Maximum signal intensity
+- `mean_signal`: Average signal intensity
+- `total_signal`: Total signal (sum of intensities)
+- `window_start`, `window_end`: Processing window coordinates
+- `p_value`: Statistical significance (if calculated)
+- `q_value`: FDR-corrected p-value (if calculated)
+
+For interactive analysis and visualization, see `footprinting.ipynb`.
 
 ### Unit tests
 

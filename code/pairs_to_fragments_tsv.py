@@ -115,17 +115,10 @@ with open(input_file, "r") as infile, open(output_file, "w") as outfile:
             midpoint2 = (start2 + end2) // 2
             length2 = end2 - start2 + 1
 
-            # Create a list of fragments and sort them by chromosome and midpoint
+            # Always write the fragments in the same order (chrom1 first, then chrom2)
             # This ensures consistent output regardless of column order in the input file
-            fragments = [
-                (chrom1, midpoint1, length1),
-                (chrom2, midpoint2, length2)
-            ]
-
-            # Sort fragments by chromosome name and then by midpoint
-            # This ensures consistent output regardless of column order
-            for chrom, midpoint, length in sorted(fragments, key=lambda x: (x[0], x[1])):
-                outfile.write(f"{chrom}\t{midpoint}\t{length}\n")
+            outfile.write(f"{chrom1}\t{midpoint1}\t{length1}\n")
+            outfile.write(f"{chrom2}\t{midpoint2}\t{length2}\n")
         except (IndexError, ValueError) as e:
             print(f"Warning: Error processing line {line_count}: {e}. Skipping: {line.strip()}", file=sys.stderr)
 
