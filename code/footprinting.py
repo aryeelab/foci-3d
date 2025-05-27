@@ -6,7 +6,7 @@ from scipy.ndimage import gaussian_filter
 import pyBigWig
 import matplotlib.pyplot as plt
 import seaborn as sns
-from collections import defaultdict
+from collections import defaultdict, Counter
 import matplotlib.gridspec as gridspec
 
 from skimage.feature import peak_local_max
@@ -17,6 +17,132 @@ from skimage.measure import regionprops
 import multiprocessing
 from joblib import Parallel, delayed
 from tqdm import tqdm
+
+
+def most_common_fragment_length(counts_gz_path, sample_lines=5000):
+    """
+    Efficiently determine the most common fragment length from a bgzip-compressed,
+    tabix-indexed counts file.
+
+    This function reads a limited number of lines from the file to quickly determine
+    the most frequently occurring fragment length without processing the entire file.
+
+    Parameters
+    ----------
+    counts_gz_path : str
+        Path to a bgzip-compressed, tabix-indexed TSV file containing genomic
+        fragment count data. Expected format: chrom, pos, fragment_length, count
+    sample_lines : int, optional
+        Maximum number of lines to read for analysis (default: 5000).
+        Larger values provide more accurate results but take longer to process.
+
+    Returns
+    -------
+    int or None
+        The most frequently occurring fragment length as an integer.
+        Returns None if no data is found or if the file cannot be processed.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the input file does not exist or tabix index is missing
+    OSError
+        If the file cannot be opened or read
+    ValueError
+        If the file format is invalid or fragment lengths cannot be parsed
+
+    Examples
+    --------
+    >>> # Find most common fragment length from first 5000 lines
+    >>> common_length = most_common_fragment_length("data.counts.tsv.gz")
+    >>> print(f"Most common fragment length: {common_length}")
+
+    >>> # Use more lines for better accuracy
+    >>> common_length = most_common_fragment_length("data.counts.tsv.gz", sample_lines=10000)
+
+    Notes
+    -----
+    - The input file must be bgzip-compressed and tabix-indexed
+    - Expected TSV format: chrom, pos, fragment_length, count
+    - Only the fragment_length column (3rd column) is analyzed
+    - If multiple fragment lengths have the same highest frequency,
+      the first one encountered is returned
+    - Empty lines and lines that cannot be parsed are skipped
+    """
+    import os
+
+    # Validate input file exists
+    if not os.path.exists(counts_gz_path):
+        raise FileNotFoundError(f"Input file does not exist: {counts_gz_path}")
+
+    # Check for tabix index
+    if not os.path.exists(counts_gz_path + '.tbi'):
+        raise FileNotFoundError(f"Tabix index file does not exist: {counts_gz_path}.tbi")
+
+    # Validate sample_lines parameter
+    if sample_lines <= 0:
+        raise ValueError("sample_lines must be a positive integer")
+
+    fragment_length_counts = Counter()
+    lines_processed = 0
+
+    try:
+        # Open the tabix file
+        with pysam.TabixFile(counts_gz_path) as tabix_file:
+            # Get all records from the file (we'll limit ourselves)
+            try:
+                # Try to get records from the entire file
+                records = tabix_file.fetch()
+            except Exception as e:
+                # If fetch fails, try to get records from a specific chromosome
+                # First, get available chromosomes
+                try:
+                    contigs = list(tabix_file.contigs)
+                    if not contigs:
+                        return None
+                    # Use the first available chromosome
+                    records = tabix_file.fetch(contigs[0])
+                except Exception:
+                    raise OSError(f"Cannot read records from file: {e}")
+
+            # Process records up to the sample limit
+            for record in records:
+                if lines_processed >= sample_lines:
+                    break
+
+                try:
+                    # Split the line into columns
+                    fields = record.strip().split('\t')
+
+                    # Validate we have at least 3 columns (chrom, pos, fragment_length)
+                    if len(fields) < 3:
+                        continue  # Skip malformed lines
+
+                    # Extract fragment length (3rd column, 0-indexed as 2)
+                    fragment_length_str = fields[2]
+
+                    # Convert to integer
+                    fragment_length = int(fragment_length_str)
+
+                    # Count this fragment length
+                    fragment_length_counts[fragment_length] += 1
+                    lines_processed += 1
+
+                except (ValueError, IndexError):
+                    # Skip lines that can't be parsed (invalid fragment length, etc.)
+                    continue
+
+    except Exception as e:
+        raise OSError(f"Error reading file {counts_gz_path}: {e}")
+
+    # Check if we found any valid data
+    if not fragment_length_counts:
+        return None
+
+    # Find the most common fragment length
+    most_common_length, count = fragment_length_counts.most_common(1)[0]
+
+    return most_common_length
 
 
 def counts_by_fraglen(tabix_path, chrom, gap_thresh=5000, min_data_points=10, outlier_percentile=95):
@@ -1041,7 +1167,7 @@ def detect_footprints(counts_gz,
                 fragment_len_min=fragment_len_min,
                 fragment_len_max=fragment_len_max,
                 scale_factor_dict=scale_factor_dict,
-                sigma=sigma 
+                sigma=sigma
             )
 
             # Skip empty windows
