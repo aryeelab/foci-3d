@@ -79,16 +79,6 @@ class TimingStats:
         """Add a processing statistic."""
         self.stats[name] = value
 
-    def get_memory_usage(self):
-        """Get current memory usage if psutil is available."""
-        if PSUTIL_AVAILABLE:
-            try:
-                process = psutil.Process()
-                return process.memory_info().rss / 1024 / 1024  # MB
-            except Exception:
-                return None
-        return None
-
     def format_time(self, seconds):
         """Format time duration in human-readable format."""
         if seconds < 1:
@@ -135,11 +125,6 @@ class TimingStats:
                     print(f"  {name:<30}: {value:,}")
                 else:
                     print(f"  {name:<30}: {value}")
-
-        # Memory usage
-        memory_mb = self.get_memory_usage()
-        if memory_mb is not None:
-            print(f"  {'Peak memory usage':<30}: {memory_mb:.1f} MB")
 
         print("="*60)
 
@@ -296,7 +281,7 @@ def calculate_normalization_factors(counts_gz, chromosomes, gap_thresh=5000, out
 
 def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, sigma, min_size,
                              fragment_len_min, fragment_len_max, scale_factor_dict, num_cores,
-                             batch_size=1000, max_memory_gb=8.0, timing_stats=None):
+                             batch_size=1000, max_memory_gb=8.0, timing_stats=None, memory_profiling=False):
     """
     Memory-aware wrapper for detect_footprints that processes windows in batches.
 
@@ -361,7 +346,7 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
         # Monitor memory before processing batch
         if PSUTIL_AVAILABLE:
             memory_before = psutil.virtual_memory().used / (1024**3)
-            if timing_stats:
+            if memory_profiling:
                 timing_stats.add_stat(f"Memory before batch {batch_idx + 1} (GB)", memory_before)
 
         try:
@@ -477,7 +462,7 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
         if PSUTIL_AVAILABLE:
             memory_after = psutil.virtual_memory().used / (1024**3)
             memory_increase = memory_after - memory_before
-            if timing_stats:
+            if memory_profiling:
                 timing_stats.add_stat(f"Memory after batch {batch_idx + 1} (GB)", memory_after)
                 timing_stats.add_stat(f"Memory increase batch {batch_idx + 1} (GB)", memory_increase)
 
@@ -882,6 +867,8 @@ Examples:
     # Timing and statistics
     parser.add_argument('--timing', action='store_true',
                         help='Display detailed timing information and processing statistics')
+    parser.add_argument('--memory-profiling', action='store_true',
+                        help='Enable detailed memory profiling at each batch step (requires psutil package)')
     parser.add_argument('--verbose', action='store_true',
                         help='Enable verbose output with step-by-step timing')
 
@@ -1041,7 +1028,8 @@ Examples:
             num_cores=args.num_cores,
             batch_size=batch_size,
             max_memory_gb=max_memory_gb,
-            timing_stats=timing_stats
+            timing_stats=timing_stats,
+            memory_profiling=args.memory_profiling
         )
 
         # Handle case where no footprints are detected
