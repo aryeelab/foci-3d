@@ -560,6 +560,10 @@ def generate_qc_plots(footprints, scale_factor_dict, output_dir, timing_stats=No
 
         # Plot histogram of signal values
         signal_values = footprints['max_signal'].values
+
+        # If there are more than 100,000 footprints, use a random subsample
+        signal_values = signal_values if len(signal_values) <= 100_000 else np.random.choice(signal_values, 100_000, replace=False)
+
         plt.hist(signal_values, bins=50, alpha=0.7, density=True, edgecolor='black', label='Empirical distribution')
 
         # Fit Weibull distribution (similar to calculate_pvalues_weibull)
@@ -703,9 +707,11 @@ def calculate_pvalues_weibull(footprints, threshold=10.0, timing_stats=None):
     if timing_stats:
         timing_stats.start_timer("P-value calculation")
 
-    print("Calculating p-values using Weibull distribution...")
-
     values = footprints['max_signal'].values
+    # If there are more than 100,000 footprints, use a random subsample
+    value_sample = values if len(values) <= 100_000 else np.random.choice(values, 100_000, replace=False)
+
+    print("Calculating p-values using Weibull distribution using " + str(len(value_sample)) + " footprints...")
 
     # Grid search over specified exclusion fractions
     candidates = [0.05, 0.10, 0.20, 0.30]
@@ -714,7 +720,7 @@ def calculate_pvalues_weibull(footprints, threshold=10.0, timing_stats=None):
     for f in candidates:
         try:
             thr = np.percentile(values, 100 * (1 - f))
-            bulk = values[values <= thr]
+            bulk = value_sample[value_sample <= thr]
 
             if len(bulk) < 10:  # Need minimum data points
                 continue
@@ -736,7 +742,7 @@ def calculate_pvalues_weibull(footprints, threshold=10.0, timing_stats=None):
     print(f"  Best exclusion fraction: {best_f:.2f} (KS statistic: {best_ks:.4f})")
 
     # Refit on bulk with best fraction
-    bulk = values[values <= best_thr]
+    bulk = value_sample[value_sample <= best_thr]
     shape, loc, scale = stats.weibull_min.fit(bulk, floc=threshold)
     print(f"  Weibull parameters: shape={shape:.3f}, scale={scale:.3f}")
 
