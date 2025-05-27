@@ -741,11 +741,12 @@ def calculate_pvalues_weibull(footprints, threshold=10.0, timing_stats=None):
         footprints['q_value'] = qvals
 
         # Report significance statistics
+        sig_01 = np.sum(footprints['q_value'] <= 0.01)
         sig_05 = np.sum(footprints['q_value'] <= 0.05)
         sig_10 = np.sum(footprints['q_value'] <= 0.10)
         sig_20 = np.sum(footprints['q_value'] <= 0.20)
 
-        print(f"  Significant footprints: {sig_05} (5% FDR), {sig_10} (10% FDR), {sig_20} (20% FDR)")
+        print(f"  Significant footprints: {sig_01} (1% FDR), {sig_05} (5% FDR), {sig_10} (10% FDR), {sig_20} (20% FDR)")
 
     except Exception as e:
         print(f"  Warning: Error calculating q-values: {e}")
@@ -755,10 +756,14 @@ def calculate_pvalues_weibull(footprints, threshold=10.0, timing_stats=None):
         timing_stats.end_timer("P-value calculation")
         timing_stats.add_stat("Footprints with p-values", len(footprints))
         if 'q_value' in footprints.columns:
+            sig_01 = np.sum(footprints['q_value'] <= 0.01)
             sig_05 = np.sum(footprints['q_value'] <= 0.05)
             sig_10 = np.sum(footprints['q_value'] <= 0.10)
+            sig_20 = np.sum(footprints['q_value'] <= 0.20)
+            timing_stats.add_stat("Significant footprints (1% FDR)", sig_01)
             timing_stats.add_stat("Significant footprints (5% FDR)", sig_05)
             timing_stats.add_stat("Significant footprints (10% FDR)", sig_10)
+            timing_stats.add_stat("Significant footprints (20% FDR)", sig_20)
 
     return footprints
 
@@ -787,8 +792,8 @@ Examples:
   # Skip statistical significance testing (faster)
   %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --skip-pvalues
 
-  # Enable detailed timing and statistics
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --timing
+  # Suppress timing and processing statistics (statistics shown by default)
+  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --nostats
 
   # Enable verbose output with step-by-step timing
   %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --verbose
@@ -865,8 +870,9 @@ Examples:
                              'Ignored if --skip-pvalues is used.')
 
     # Timing and statistics
-    parser.add_argument('--timing', action='store_true',
-                        help='Display detailed timing information and processing statistics')
+    parser.add_argument('--nostats', action='store_true',
+                        help='Suppress timing information and processing statistics output '
+                             '(by default, statistics are shown)')
     parser.add_argument('--memory-profiling', action='store_true',
                         help='Enable detailed memory profiling at each batch step (requires psutil package)')
     parser.add_argument('--verbose', action='store_true',
@@ -879,8 +885,8 @@ Examples:
 
     args = parser.parse_args()
 
-    # Initialize timing statistics
-    show_timing = args.timing or args.verbose
+    # Initialize timing statistics (default behavior is to show stats unless --nostats is specified)
+    show_timing = not args.nostats or args.verbose
     timing_stats = TimingStats(verbose=args.verbose) if show_timing else None
 
     # Configure memory management
@@ -959,6 +965,9 @@ Examples:
     if timing_stats:
         timing_stats.add_stat("Window size (bp)", args.window_size)
         timing_stats.add_stat("Number of regions", len(chromosomes))
+        timing_stats.add_stat("Number of CPU cores used", args.num_cores)
+        timing_stats.add_stat("Signal threshold", args.threshold)
+        timing_stats.add_stat("Sigma (smoothing parameter)", args.sigma)
 
         # Calculate total base pairs covered
         total_bp = 0
@@ -1057,12 +1066,6 @@ Examples:
         timing_stats.end_timer("Footprint detection")
         timing_stats.add_stat("Total footprints detected", len(footprints))
 
-        # Calculate footprints per Kb if we have region information
-        total_bp = timing_stats.stats.get("Total base pairs in regions", 0)
-        if total_bp > 0:
-            footprints_per_kb = len(footprints) / (total_bp / 1000)
-            timing_stats.add_stat("Footprints per Kb", footprints_per_kb)
-
     # Calculate p-values and q-values if requested
     if not args.skip_pvalues and not footprints.empty:
         footprints = calculate_pvalues_weibull(footprints, threshold=args.threshold, timing_stats=timing_stats)
@@ -1086,6 +1089,33 @@ Examples:
 
         # Use filtered results
         footprints = footprints_filtered
+
+        # Add fragment length distribution statistics for significant footprints (dynamic FDR based on qcutoff)
+        if timing_stats and not footprints.empty and 'q_value' in footprints.columns:
+            # Get footprints passing the user-specified FDR threshold
+            significant_qcutoff = footprints[footprints['q_value'] <= args.qcutoff]
+
+            # Convert qcutoff to percentage for display
+            fdr_percentage = int(args.qcutoff * 100)
+
+            if not significant_qcutoff.empty and 'fragment_length' in significant_qcutoff.columns:
+                # Calculate fragment length distribution statistics
+                frag_lengths = significant_qcutoff['fragment_length']
+
+                # Count footprints in different fragment length ranges
+                count_80bp_or_less = len(frag_lengths[frag_lengths <= 80])
+                count_80_120bp = len(frag_lengths[(frag_lengths > 80) & (frag_lengths < 120)])
+                count_120bp_or_more = len(frag_lengths[frag_lengths >= 120])
+
+                timing_stats.add_stat(f"Significant footprints ({fdr_percentage}% FDR, ≤80bp)", count_80bp_or_less)
+                timing_stats.add_stat(f"Significant footprints ({fdr_percentage}% FDR, 80-120bp)", count_80_120bp)
+                timing_stats.add_stat(f"Significant footprints ({fdr_percentage}% FDR, ≥120bp)", count_120bp_or_more)
+
+                # Calculate significant footprints per Kb (dynamic FDR naming)
+                total_bp = timing_stats.stats.get("Total base pairs in regions", 0)
+                if total_bp > 0:
+                    significant_per_kb = len(significant_qcutoff) / (total_bp / 1000)
+                    timing_stats.add_stat(f"Significant footprints ({fdr_percentage}% FDR) per Kb", significant_per_kb)
 
         # Handle case where no footprints pass the threshold
         if footprints.empty:
