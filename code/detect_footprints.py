@@ -836,10 +836,10 @@ Examples:
                         help='Path to save calculated normalization factors (pickle file)')
 
     # Detection parameters
-    parser.add_argument('--threshold', type=float, default=10.0,
-                        help='Minimum signal intensity to be considered part of a footprint (default: 10.0)')
-    parser.add_argument('--sigma', type=float, default=1.0,
-                        help='Standard deviation for Gaussian smoothing (default: 1.0)')
+    parser.add_argument('--threshold', type=float, default=5.0,
+                        help='Minimum normalized signal intensity to be considered part of a footprint (default: 5.0)')
+    parser.add_argument('--sigma', type=float, default=10.0,
+                        help='Standard deviation for Gaussian smoothing (default: 10.0)')
     parser.add_argument('--min-size', type=int, default=5,
                         help='Minimum footprint size in pixels (default: 5)')
 
