@@ -39,11 +39,20 @@ except ImportError:
 
 # Import functions from the footprinting module
 try:
-    from footprinting import average_counts_by_fraglen, detect_footprints
+    from footprinting import average_counts_by_fraglen, detect_footprints, most_common_fragment_length
 except ImportError as e:
     print(f"Error: Cannot import footprinting module: {e}", file=sys.stderr)
     print("Please ensure footprinting.py is in the same directory or in your Python path.", file=sys.stderr)
     sys.exit(1)
+
+# Try to import matplotlib for QC plots (optional)
+try:
+    import matplotlib.pyplot as plt
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend for server environments
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
 
 
 class TimingStats:
@@ -497,6 +506,117 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
     return final_results
 
 
+def generate_qc_plots(footprints, scale_factor_dict, output_dir, timing_stats=None):
+    """
+    Generate QC plots for footprint detection results.
+
+    Parameters
+    ----------
+    footprints : pd.DataFrame
+        DataFrame with detected footprints containing 'max_signal' and optionally 'p_value' columns
+    scale_factor_dict : dict
+        Dictionary mapping fragment length to average count per position
+    output_dir : str
+        Directory to save QC plots
+    timing_stats : TimingStats, optional
+        Timing statistics tracker
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        print("Warning: matplotlib not available. Skipping QC plot generation.")
+        return
+
+    if timing_stats:
+        timing_stats.start_timer("QC plot generation")
+
+    print("Generating QC plots...")
+
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 1. P-value histogram
+    if 'p_value' in footprints.columns and not footprints.empty:
+        plt.figure(figsize=(8, 6))
+        plt.hist(footprints['p_value'], bins=50, alpha=0.7, edgecolor='black')
+        plt.xlabel('P-value')
+        plt.ylabel('Frequency')
+        plt.xlim(0, 1)
+        plt.title('Distribution of P-values from Footprint Detection')
+        plt.grid(True, alpha=0.3)
+
+        # Add vertical line at 0.05 for reference
+        plt.axvline(x=0.05, color='red', linestyle='--', alpha=0.7, label='p = 0.05')
+        plt.legend()
+
+        pvalue_plot_path = os.path.join(output_dir, 'qc-pvalue-histogram.png')
+        plt.savefig(pvalue_plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"  Saved p-value histogram: {pvalue_plot_path}")
+    else:
+        print("  Skipping p-value histogram (no p-values calculated or no footprints detected)")
+
+    # 2. Signal distribution with Weibull fit
+    if not footprints.empty and 'max_signal' in footprints.columns:
+        plt.figure(figsize=(10, 6))
+
+        # Plot histogram of signal values
+        signal_values = footprints['max_signal'].values
+        plt.hist(signal_values, bins=50, alpha=0.7, density=True, edgecolor='black', label='Empirical distribution')
+
+        # Fit Weibull distribution (similar to calculate_pvalues_weibull)
+        try:
+            # Use same approach as in calculate_pvalues_weibull
+            candidates = [0.05, 0.10, 0.20, 0.30]
+            results = []
+
+            for f in candidates:
+                try:
+                    thr = np.percentile(signal_values, 100 * (1 - f))
+                    bulk = signal_values[signal_values <= thr]
+
+                    if len(bulk) < 10:
+                        continue
+
+                    shape, loc, scale = stats.weibull_min.fit(bulk, floc=10.0)  # Use default threshold
+                    p_bulk = 1 - stats.weibull_min.cdf(bulk, shape, loc=10.0, scale=scale)
+                    ks_stat, _ = stats.kstest(p_bulk, 'uniform')
+                    results.append((f, thr, shape, scale, ks_stat))
+                except Exception:
+                    continue
+
+            if results:
+                # Select best fit
+                best_f, best_thr, best_shape, best_scale, best_ks = min(results, key=lambda x: x[4])
+
+                # Plot fitted Weibull distribution
+                x_range = np.linspace(signal_values.min(), np.percentile(signal_values, 99), 500)
+                weibull_pdf = stats.weibull_min.pdf(x_range, best_shape, loc=10.0, scale=best_scale)
+                plt.plot(x_range, weibull_pdf, 'r-', linewidth=2,
+                        label=f'Weibull fit (shape={best_shape:.2f}, scale={best_scale:.2f})')
+
+                plt.xlabel('Signal Intensity')
+                plt.ylabel('Density')
+                plt.title('Signal Distribution with Weibull Fit')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+
+                signal_plot_path = os.path.join(output_dir, 'qc-signal-distribution-weibull-fit.png')
+                plt.savefig(signal_plot_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                print(f"  Saved signal distribution plot: {signal_plot_path}")
+            else:
+                plt.close()
+                print("  Skipping signal distribution plot (could not fit Weibull distribution)")
+
+        except Exception as e:
+            plt.close()
+            print(f"  Warning: Error generating signal distribution plot: {e}")
+    else:
+        print("  Skipping signal distribution plot (no footprints detected)")
+
+    if timing_stats:
+        timing_stats.end_timer("QC plot generation")
+
+
 def format_output_dataframe(footprints):
     """
     Format the footprints DataFrame for compact output by:
@@ -759,6 +879,11 @@ Examples:
     parser.add_argument('--verbose', action='store_true',
                         help='Enable verbose output with step-by-step timing')
 
+    # QC plots
+    parser.add_argument('--qcplots', action='store_true',
+                        help='Generate QC diagnostic plots (p-value histogram and signal distribution with Weibull fit). '
+                             'Plots will be saved in the same directory as the output file.')
+
     args = parser.parse_args()
 
     # Initialize timing statistics
@@ -875,6 +1000,23 @@ Examples:
 
     print(f"Using normalization factors for {len(scale_factor_dict)} fragment lengths")
 
+    # Add enhanced processing statistics
+    if timing_stats and scale_factor_dict:
+        # Calculate average signal at 50bp fragment length (scaled for 1kb window)
+        signal_50bp = scale_factor_dict.get(50, 0) * 1000
+        timing_stats.add_stat("Average signal at 50bp fragment length (per 1kb)", signal_50bp)
+
+        # Find most common fragment length
+        try:
+            most_common_frag_len = most_common_fragment_length(args.input)
+            if most_common_frag_len is not None:
+                timing_stats.add_stat("Most common fragment length", most_common_frag_len)
+                # Also add the signal for the most common fragment length
+                most_common_signal = scale_factor_dict.get(most_common_frag_len, 0) * 1000
+                timing_stats.add_stat(f"Average signal at {most_common_frag_len}bp fragment length (per 1kb)", most_common_signal)
+        except Exception as e:
+            print(f"Warning: Could not determine most common fragment length: {e}")
+
     # Detect footprints using memory-aware batched processing
     if timing_stats:
         timing_stats.start_timer("Footprint detection")
@@ -963,6 +1105,11 @@ Examples:
             print("No footprints detected to filter")
         elif 'q_value' not in footprints.columns:
             print(f"Saving all {len(footprints):,} detected footprints (no q-value filtering - q-values not calculated)")
+
+    # Generate QC plots if requested
+    if args.qcplots:
+        output_dir = os.path.dirname(args.output) or '.'
+        generate_qc_plots(footprints, scale_factor_dict, output_dir, timing_stats)
 
     # Format output for compact file size
     formatted_footprints = format_output_dataframe(footprints)
