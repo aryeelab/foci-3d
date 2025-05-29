@@ -105,14 +105,14 @@ with open(input_file, "r") as infile, open(output_file, "w") as outfile:
             pos51 = int(columns[column_indices['pos51']])
             pos31 = int(columns[column_indices['pos31']])
             start1, end1 = min(pos51, pos31), max(pos51, pos31)
-            midpoint1 = (start1 + end1) // 2
+            midpoint1 = (start1 + end1) / 2.0
             length1 = end1 - start1 + 1
 
             chrom2 = columns[column_indices['chrom2']]
             pos52 = int(columns[column_indices['pos52']])
             pos32 = int(columns[column_indices['pos32']])
             start2, end2 = min(pos52, pos32), max(pos52, pos32)
-            midpoint2 = (start2 + end2) // 2
+            midpoint2 = (start2 + end2) / 2.0
             length2 = end2 - start2 + 1
 
             # Always write the fragments in the same order (chrom1 first, then chrom2)
