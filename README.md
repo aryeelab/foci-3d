@@ -6,10 +6,29 @@ This toolkit provides tools for analyzing and modeling DNA footprints from Micro
 
 These steps preprocess Micro-C data to fragment counts. Counts are binned by fragment length and position (mid-point).
 
-### Create a virtual environment
+
+### Step 0: Setup
+
+#### Create a virtual environment
 ```bash
 # Install dependencies for preprocessing and visualization
 conda env create -f footprint-tools-env.yaml
+```
+
+#### Download a genome
+```bash
+mkdir genome && cd genome
+# Download the GRCh38 FASTA
+wget ftp://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_45/GRCh38.primary_assembly.genome.fa.gz
+
+# Decompress it
+gunzip GRCh38.primary_assembly.genome.fa.gz
+
+# 3. Re-compress with BGZF
+bgzip -@ 4 GRCh38.primary_assembly.genome.fa
+
+# Index it with samtools (creates .fai file)
+samtools faidx GRCh38.primary_assembly.genome.fa.gz
 ```
 
 ### Preprocess read pairs to fragment counts
@@ -35,7 +54,7 @@ pairtools dedup -o ${SAMPLE}.pairs
 
 #### Step 2: Fragment pairs (.pairs) to fragment counts by position and length (.counts.tsv.gz)
 ```bash
-n# Computes a sparse matrix of fragment counts per chrom, midpoint, length bin
+# Computes a sparse matrix of fragment counts per chrom, midpoint, length bin
 # Output is a TSV of chrom \t pos \t fragment_length \t count
 # This file is bgzip compressed and tabix indexed
 
