@@ -471,8 +471,8 @@ def average_counts_by_fraglen(tabix_path, chrom, gap_thresh=5000, num_regions=50
     """
     Compute the average count per base for each fragment_length using a sampling-based approach,
     ignoring any stretches > gap_thresh bases with zero data.
-    
-    This optimized version samples approximately 5 MB total (500 regions × 10 KB each) 
+
+    This optimized version samples approximately 5 MB total (500 regions × 10 KB each)
     evenly distributed across the chromosome length instead of processing the entire chromosome.
     This provides statistically equivalent results while processing only ~1-2% of the data.
 
@@ -499,21 +499,21 @@ def average_counts_by_fraglen(tabix_path, chrom, gap_thresh=5000, num_regions=50
         frag_len -> average_count_per_position
     """
     tb = pysam.TabixFile(tabix_path)
-    
+
     # --- 1) Determine chromosome length and generate sampling regions ------
-    
+
     # First, get the approximate chromosome span by scanning data
     chrom_start = None
     chrom_end = None
     sample_count = 0
-    
-    
-    # Find last position 
+
+
+    # Find last position
     for rec in tb.fetch(chrom):
         chrom_start = int(rec.split('\t', 2)[1])
         break
     chrom_end = max_pos(tabix_path, chrom)
-    
+
     # Use reasonable defaults if chromosome seems too small
     chrom_length = chrom_end - chrom_start + 1
     if chrom_length < num_regions * region_size:
@@ -526,49 +526,49 @@ def average_counts_by_fraglen(tabix_path, chrom, gap_thresh=5000, num_regions=50
             if num_regions < 10:
                 region_size = chrom_length // 10
                 num_regions = 10
-    
+
     # Generate evenly spaced sampling regions
     sampling_regions = []
     step_size = chrom_length // num_regions
-    
+
     for i in range(num_regions):
         region_start = chrom_start + i * step_size
         region_end = min(region_start + region_size - 1, chrom_end)
-        
+
         # Ensure we don't go beyond chromosome bounds
         if region_start <= chrom_end:
             sampling_regions.append((region_start, region_end))
-    
+
     # --- 2) Process each sampling region using the original two-pass algorithm ---
-    
+
     total_sums = defaultdict(int)
     total_valid_bases = 0
-    
+
     for region_start, region_end in sampling_regions:
         try:
             # Apply the original two-pass algorithm within this region
             region_sums, region_bases = _process_region(
                 tb, chrom, region_start, region_end, gap_thresh
             )
-            
+
             # Accumulate results
             for frag_len, count in region_sums.items():
                 total_sums[frag_len] += count
             total_valid_bases += region_bases
-            
+
         except Exception:
             # Skip regions that have errors (e.g., no data)
             continue
-    
+
     # --- 3) Compute final averages across all sampled regions ---------------
-    
+
     if total_valid_bases == 0:
         return {}
-    
+
     # Every fragment_length is averaged over the same total_valid_bases,
     # since zeros are implicitly filled for positions with no record
     averages = {fl: total / total_valid_bases for fl, total in total_sums.items()}
-    
+
     if by_fragment_length:
         return averages
     else:
@@ -578,8 +578,8 @@ def average_counts_by_fraglen(tabix_path, chrom, gap_thresh=5000, num_regions=50
             if k < common_len:
                 averages[k] = median
             if k > common_len:
-                averages[k] = averages[common_len]  
-    
+                averages[k] = averages[common_len]
+
     return averages
 
 
@@ -1518,7 +1518,8 @@ def detect_footprints(counts_gz,
                   fragment_len_min=25,
                   fragment_len_max=150,
                   scale_factor_dict=None,
-                  num_cores=4):
+                  num_cores=4,
+                  quiet=False):
     """
     Process genomic regions in windows and detect footprints using the detect_blobs_matrix function.
 
@@ -1547,6 +1548,8 @@ def detect_footprints(counts_gz,
         Dictionary of scaling factors for normalization (required)
     num_cores : int, optional
         Number of CPU cores to use for parallel processing (default: 4)
+    quiet : bool, optional
+        If True, suppress all print statements and progress output (default: False)
 
     Returns
     -------
@@ -1563,7 +1566,8 @@ def detect_footprints(counts_gz,
         - 'window_end': End position of the window where the blob was detected
     """
     # Get valid windows for processing
-    print("Getting valid windows...")
+    if not quiet:
+        print("Getting valid windows...")
     windows = get_valid_windows(
         counts_gz=counts_gz,
         chromosomes=chromosomes,
@@ -1618,17 +1622,23 @@ def detect_footprints(counts_gz,
             return window_blobs
 
         except Exception as e:
-            print(f"Error processing window {chrom}:{window_start}-{window_end}: {e}")
+            if not quiet:
+                print(f"Error processing window {chrom}:{window_start}-{window_end}: {e}")
             return pd.DataFrame()
 
     # Determine the number of cores to use
     num_cores = min(num_cores, multiprocessing.cpu_count())
 
     # Process windows in parallel with progress bar
-    print(f"Processing {len(windows)} windows using {num_cores} cores...")
-    results = Parallel(n_jobs=num_cores)(
-        delayed(process_window)(window) for window in tqdm(windows, desc="Detecting footprints")
-    )
+    if not quiet:
+        print(f"Processing {len(windows)} windows using {num_cores} cores...")
+        results = Parallel(n_jobs=num_cores)(
+            delayed(process_window)(window) for window in tqdm(windows, desc="Detecting footprints")
+        )
+    else:
+        results = Parallel(n_jobs=num_cores)(
+            delayed(process_window)(window) for window in windows
+        )
 
     # Combine results from all windows
     all_blobs = pd.concat(results, ignore_index=True)
@@ -1642,7 +1652,8 @@ def detect_footprints(counts_gz,
         ]
         all_blobs = all_blobs[column_order]
 
-    print(f"Detected {len(all_blobs)} footprints across {len(windows)} windows.")
+    if not quiet:
+        print(f"Detected {len(all_blobs)} footprints across {len(windows)} windows.")
     return all_blobs
 
 
