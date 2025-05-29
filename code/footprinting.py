@@ -19,6 +19,29 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 
+def _parse_position(pos_str):
+    """
+    Helper function to parse position from string, handling both integer and float formats.
+
+    Parameters
+    ----------
+    pos_str : str
+        Position string that may be integer or float format
+
+    Returns
+    -------
+    int
+        Integer position (rounded if input was float)
+    """
+    try:
+        # Try parsing as float first (handles both int and float strings)
+        pos_float = float(pos_str)
+        # Round to nearest integer
+        return int(round(pos_float))
+    except ValueError:
+        raise ValueError(f"Cannot parse position: {pos_str}")
+
+
 def most_common_fragment_length(counts_gz_path, sample_lines=5000):
     """
     Efficiently determine the most common fragment length from a bgzip-compressed,
@@ -180,7 +203,7 @@ def counts_by_fraglen(tabix_path, chrom, gap_thresh=5000, min_data_points=10, ou
     seg_start = None
 
     for rec in tb.fetch(chrom):
-        pos = int(rec.split('\t', 2)[1])
+        pos = _parse_position(rec.split('\t', 2)[1])
 
         if prev_pos is None:
             # first position seen
@@ -225,7 +248,8 @@ def counts_by_fraglen(tabix_path, chrom, gap_thresh=5000, min_data_points=10, ou
 
     for rec in tb.fetch(chrom):
         cols = rec.split('\t')
-        pos, frag_len, cnt = map(int, (cols[1], cols[2], cols[3]))
+        pos = _parse_position(cols[1])
+        frag_len, cnt = map(int, (cols[2], cols[3]))
 
         # advance to the segment that might contain this pos
         while seg_i < len(segments) and pos > seg_end:
@@ -297,7 +321,7 @@ def nbparams_by_fraglen(tabix_path, chrom, gap_thresh=5000, min_data_points=10, 
     seg_start = None
 
     for rec in tb.fetch(chrom):
-        pos = int(rec.split('\t', 2)[1])
+        pos = _parse_position(rec.split('\t', 2)[1])
 
         if prev_pos is None:
             # first position seen
@@ -465,7 +489,7 @@ def max_pos(counts_gz: str, chrom: str) -> int:
             lo = mid + 1
         except StopIteration:
             hi = mid - 1
-    return max_pos
+    return int(max_pos)
 
 def average_counts_by_fraglen(tabix_path, chrom, gap_thresh=5000, num_regions=500, region_size=5000, by_fragment_length=False):
     """
@@ -510,7 +534,7 @@ def average_counts_by_fraglen(tabix_path, chrom, gap_thresh=5000, num_regions=50
 
     # Find last position
     for rec in tb.fetch(chrom):
-        chrom_start = int(rec.split('\t', 2)[1])
+        chrom_start = _parse_position(rec.split('\t', 2)[1])
         break
     chrom_end = max_pos(tabix_path, chrom)
 
@@ -606,7 +630,7 @@ def _process_region(tb, chrom, region_start, region_end, gap_thresh):
         return {}, 0
 
     for rec in records:
-        pos = int(rec.split('\t', 2)[1])
+        pos = _parse_position(rec.split('\t', 2)[1])
 
         # Skip positions outside our region
         if pos < region_start or pos > region_end:
@@ -650,7 +674,8 @@ def _process_region(tb, chrom, region_start, region_end, gap_thresh):
 
     for rec in records:
         cols = rec.split('\t')
-        pos, frag_len, cnt = map(int, (cols[1], cols[2], cols[3]))
+        pos = _parse_position(cols[1])
+        frag_len, cnt = map(int, (cols[2], cols[3]))
 
         # Skip positions outside our region
         if pos < region_start or pos > region_end:
@@ -687,7 +712,7 @@ def _average_counts_by_fraglen_full_chromosome(tabix_path, chrom, gap_thresh):
     seg_start = None
 
     for rec in tb.fetch(chrom):
-        pos = int(rec.split('\t', 2)[1])
+        pos = _parse_position(rec.split('\t', 2)[1])
 
         if prev_pos is None:
             # first position seen
@@ -725,172 +750,8 @@ def _average_counts_by_fraglen_full_chromosome(tabix_path, chrom, gap_thresh):
 
     for rec in tb.fetch(chrom):
         cols = rec.split('\t')
-        pos, frag_len, cnt = map(int, (cols[1], cols[2], cols[3]))
-
-        # advance to the segment that might contain this pos
-        while seg_i < len(segments) and pos > seg_end:
-            seg_i += 1
-            if seg_i < len(segments):
-                seg_start, seg_end = segments[seg_i]
-
-        if seg_i >= len(segments):
-            # we've passed all valid segments
-            break
-
-        # if current pos lies in the segment, count it
-        if seg_start <= pos <= seg_end:
-            sums[frag_len] += cnt
-        # else: pos is inside a "big gap" and we ignore it entirely
-
-    # --- 3) Compute means ---------------------------------------------------
-
-    # Every fragment_length is averaged over the same total_bases,
-    # since zeros are implicitly filled for positions with no record
-    averages = {fl: total / total_bases for fl, total in sums.items()}
-    return averages
-def _process_region(tb, chrom, region_start, region_end, gap_thresh):
-    """
-    Helper function to process a single region using the original two-pass algorithm.
-
-    Returns
-    -------
-    tuple
-        (sums, total_bases) where:
-        - sums: dict of fragment_length -> total_count in this region
-        - total_bases: total number of valid bases in this region
-    """
-    # --- 1) First pass: discover "valid" segments within the region --------
-
-    segments = []
-    prev_pos = None
-    seg_start = None
-
-    try:
-        records = tb.fetch(chrom, region_start, region_end)
-    except Exception:
-        return {}, 0
-
-    for rec in records:
-        pos = int(rec.split('\t', 2)[1])
-
-        # Skip positions outside our region
-        if pos < region_start or pos > region_end:
-            continue
-
-        if prev_pos is None:
-            # first position seen in this region
-            seg_start = pos
-            prev_pos = pos
-            continue
-
-        if pos - prev_pos <= gap_thresh:
-            # still in the same "valid" segment
-            prev_pos = pos
-        else:
-            # gap too large → close old segment, start new one
-            segments.append((seg_start, prev_pos))
-            seg_start = pos
-            prev_pos = pos
-
-    # finalize the last segment
-    if prev_pos is not None:
-        segments.append((seg_start, prev_pos))
-
-    if not segments:
-        return {}, 0
-
-    # compute total number of bases we'll average over in this region
-    total_bases = sum(end - start + 1 for start, end in segments)
-
-    # --- 2) Second pass: accumulate counts per fragment_length in region ---
-
-    sums = defaultdict(int)
-    seg_i = 0
-    seg_start, seg_end = segments[0]
-
-    try:
-        records = tb.fetch(chrom, region_start, region_end)
-    except Exception:
-        return {}, total_bases
-
-    for rec in records:
-        cols = rec.split('\t')
-        pos, frag_len, cnt = map(int, (cols[1], cols[2], cols[3]))
-
-        # Skip positions outside our region
-        if pos < region_start or pos > region_end:
-            continue
-
-        # advance to the segment that might contain this pos
-        while seg_i < len(segments) and pos > seg_end:
-            seg_i += 1
-            if seg_i < len(segments):
-                seg_start, seg_end = segments[seg_i]
-
-        if seg_i >= len(segments):
-            # we've passed all valid segments in this region
-            break
-
-        # if current pos lies in the segment, count it
-        if seg_start <= pos <= seg_end:
-            sums[frag_len] += cnt
-
-    return sums, total_bases
-
-
-def _average_counts_by_fraglen_full_chromosome(tabix_path, chrom, gap_thresh):
-    """
-    Fallback function that processes the entire chromosome using the original algorithm.
-    Used for very small chromosomes where sampling doesn't make sense.
-    """
-    tb = pysam.TabixFile(tabix_path)
-
-    # --- 1) First pass: discover "valid" segments --------------------------
-
-    segments = []         # list of (start, end) inclusive
-    prev_pos = None
-    seg_start = None
-
-    for rec in tb.fetch(chrom):
-        pos = int(rec.split('\t', 2)[1])
-
-        if prev_pos is None:
-            # first position seen
-            seg_start = pos
-            prev_pos = pos
-            continue
-
-        if pos - prev_pos <= gap_thresh:
-            # still in the same "valid" segment
-            prev_pos = pos
-        else:
-            # gap too large → close old segment, start new one
-            segments.append((seg_start, prev_pos))
-            seg_start = pos
-            prev_pos = pos
-
-    # finalize the last segment
-    if prev_pos is not None:
-        segments.append((seg_start, prev_pos))
-
-    if not segments:
-        return {}
-
-    # compute total number of bases we'll average over
-    total_bases = sum(end - start + 1 for start, end in segments)
-
-    # --- 2) Second pass: accumulate counts per fragment_length ------------
-
-    # reopen (or reset) the TabixFile
-    tb = pysam.TabixFile(tabix_path)
-    sums = defaultdict(int)
-
-    seg_i = 0
-    seg_start, seg_end = segments[0]
-
-    for rec in tb.fetch(chrom):
-        cols = rec.split('\t')
-        pos, frag_len, cnt = map(int, (cols[1], cols[2], cols[3]))
+        pos = _parse_position(cols[1])
+        frag_len, cnt = map(int, (cols[2], cols[3]))
 
         # advance to the segment that might contain this pos
         while seg_i < len(segments) and pos > seg_end:
@@ -973,8 +834,10 @@ def get_count_matrix(counts_gz: str,
     # parse into a DataFrame
     rows = [rec.split('\t') for rec in records]
     df = pd.DataFrame(rows, columns=['chrom', 'pos', 'fragment_length', 'count'])
+
+    # Handle float positions by converting to int via rounding
+    df['pos'] = df['pos'].astype(float).round().astype(int)
     df = df.astype({
-        'pos': int,
         'fragment_length': int,
         'count': int
     })
@@ -1330,7 +1193,7 @@ def get_valid_windows(counts_gz, chromosomes=None, window_overlap_bp=0, window_s
             records = tb.fetch(chrom)
 
         for rec in records:
-            pos = int(rec.split('\t', 2)[1])
+            pos = _parse_position(rec.split('\t', 2)[1])
 
             # Skip positions outside the specified region if region is defined
             if region_start is not None and pos < region_start:
