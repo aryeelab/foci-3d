@@ -65,7 +65,7 @@ with open(input_file, "r") as infile:
             try:
                 column_indices = get_column_indices(line)
                 header_found = True
-                print(f"Using column indices: {column_indices}", file=sys.stderr)
+                #print(f"Using column indices: {column_indices}", file=sys.stderr)
             except ValueError as e:
                 print(f"Warning: {e}. Using default column indices.", file=sys.stderr)
             break
