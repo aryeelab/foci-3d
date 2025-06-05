@@ -61,6 +61,8 @@ pairtools dedup -o ${SAMPLE}.pairs
 # Convert the pairs file to a fragments file (one fragment per line with chrom, midpoint and length columns)
 python code/pairs_to_fragments_tsv.py ${SAMPLE}.pairs ${SAMPLE}.fragments.tsv
 
+# Note that `pairs_to_fragments_tsv.py` is an AI (Claude Sonnet 4)-optimized version of the original (slower and easier to read) `pairs_to_fragments_tsv_simple.py`. The output is identical.
+
 # Sort the fragments file
 sort -k1,1 -k2,2n -k3,3n ${SAMPLE}.fragments.tsv > ${SAMPLE}.fragments.sorted.tsv
 
