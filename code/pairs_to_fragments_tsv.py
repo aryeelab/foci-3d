@@ -105,7 +105,7 @@ def process_ultra_optimized(input_file: str, output_file: str, column_indices: D
     line_count = 0
     data_line_count = 0
 
-    print(f"Processing {input_file} with ultra-optimized algorithm...", file=sys.stderr)
+    print(f"Processing {input_file} ...", file=sys.stderr)
     if estimated_total:
         print(f"Estimated {estimated_total:,} total lines", file=sys.stderr)
 
@@ -146,12 +146,12 @@ def process_ultra_optimized(input_file: str, output_file: str, column_indices: D
 
                         # Single-line progress update (overwrites previous line)
                         print(f"\rProgress: [{bar}] {progress_pct:.1f}% | "
-                              f"{line_count:,} lines | {rate:,.0f} lines/s | ETA: {eta_str}",
+                              f"{line_count:,} lines | {rate:,.0f} pairs/s | ETA: {eta_str}",
                               end='', file=sys.stderr, flush=True)
                     else:
                         # Fallback without ETA
                         print(f"\rProgress: {line_count:,} lines | "
-                              f"{rate:,.0f} lines/s | Elapsed: {format_time(elapsed)}",
+                              f"{rate:,.0f} pairs/s | Elapsed: {format_time(elapsed)}",
                               end='', file=sys.stderr, flush=True)
 
                 # Fast header check using first character
@@ -221,10 +221,9 @@ def process_ultra_optimized(input_file: str, output_file: str, column_indices: D
 
     # Add newline after progress bar and show completion
     print(f"\n✅ Completed processing:", file=sys.stderr)
-    print(f"  Total lines: {line_count:,}", file=sys.stderr)
-    print(f"  Data lines: {data_line_count:,}", file=sys.stderr)
+    print(f"  Pairs: {data_line_count:,}", file=sys.stderr)
     print(f"  Processing time: {format_time(total_time)}", file=sys.stderr)
-    print(f"  Average rate: {rate:,.0f} lines/second", file=sys.stderr)
+    print(f"  Average rate: {rate:,.0f} pairs/second", file=sys.stderr)
     print(f"  Throughput: {data_line_count/total_time:,.0f} pairs/second", file=sys.stderr)
 
     # Performance metrics for large-scale analysis
@@ -254,22 +253,31 @@ def main():
     column_indices = default_indices.copy()
     header_found = False
 
-    # Optimized header scanning - read only first few KB
+    # Optimized header scanning - read header section line by line
     try:
         with open(input_file, 'r') as f:
-            # Read first 8KB to find header
-            header_data = f.read(8192)
-            for line in header_data.split('\n'):
+            lines_scanned = 0
+            max_header_lines = 5000  # Reasonable limit for header scanning
+
+            for line in f:
+                lines_scanned += 1
+
                 if line.startswith("#columns:"):
-                    print(f"Found header line: {line.strip()}", file=sys.stderr)
+                    #print(f"Found header line: {line.strip()}", file=sys.stderr)
                     try:
                         column_indices = get_column_indices(line)
                         header_found = True
+                        print(f"Using column indices: {column_indices}", file=sys.stderr)
                     except ValueError as e:
                         print(f"Warning: {e}. Using default column indices.", file=sys.stderr)
                     break
                 elif not line.startswith('#') and line.strip():
-                    break  # Stop at first data line
+                    # Reached data section without finding #columns line
+                    break
+                elif lines_scanned >= max_header_lines:
+                    # Prevent infinite scanning of very large headers
+                    print(f"Warning: Scanned {max_header_lines} header lines without finding #columns. Using defaults.", file=sys.stderr)
+                    break
     except Exception as e:
         print(f"Warning: Could not scan for header: {e}", file=sys.stderr)
 
