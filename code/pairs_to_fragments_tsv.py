@@ -311,6 +311,11 @@ def main():
         print(f"Error: Input file '{input_file}' not found", file=sys.stderr)
         sys.exit(1)
 
+    # Create output directory if it doesn't exist
+    from pathlib import Path
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
     # Default column indices for backward compatibility
     default_indices = {
         'chrom1': 1, 'chrom2': 3, 'pos51': 8, 'pos52': 9, 'pos31': 10, 'pos32': 11

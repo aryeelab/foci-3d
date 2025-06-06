@@ -68,6 +68,9 @@ class FragmentCountsPipeline:
             if base_name.endswith('.pairs'):
                 base_name = base_name[:-6]  # Remove .pairs
             self.output_file = self.input_file.parent / f"{base_name}.counts.tsv.gz"
+
+        # Create output directory if it doesn't exist
+        self.output_file.parent.mkdir(parents=True, exist_ok=True)
         
         # Create temporary directory for intermediate files
         self.temp_dir = Path(tempfile.mkdtemp(prefix="fragment_counts_"))
