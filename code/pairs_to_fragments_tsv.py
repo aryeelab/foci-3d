@@ -46,26 +46,41 @@ def format_time(seconds: float) -> str:
         return f"{seconds/3600:.1f}h"
 
 def estimate_total_lines(file_path: str) -> Optional[int]:
-    """Fast estimation of total lines using file size and average line length."""
+    """Improved estimation of total lines using multiple samples for better accuracy."""
     try:
         file_size = os.path.getsize(file_path)
         if file_size == 0:
             return 0
 
-        # Sample first 64KB for line length estimation
-        with open(file_path, 'rb') as f:
-            sample = f.read(65536)
-            if not sample:
-                return 0
+        # Use multiple samples from different parts of the file
+        sample_points = [0.1, 0.5, 0.9]  # Sample at 10%, 50%, and 90% through file
+        line_lengths = []
 
-            # Count newlines in sample
-            newlines = sample.count(b'\n')
-            if newlines == 0:
+        with open(file_path, 'rb') as f:
+            for point in sample_points:
+                # Seek to sample point
+                f.seek(int(file_size * point))
+                if point > 0:
+                    f.readline()  # Skip partial line
+
+                # Read sample
+                sample = f.read(32768)  # 32KB sample
+                if sample:
+                    newlines = sample.count(b'\n')
+                    if newlines > 0:
+                        avg_length = len(sample) / newlines
+                        line_lengths.append(avg_length)
+
+            if not line_lengths:
                 return None
 
-            # Estimate average line length and total lines
-            avg_line_length = len(sample) / newlines
-            estimated_lines = int(file_size / avg_line_length)
+            # Use median line length for better accuracy
+            line_lengths.sort()
+            median_line_length = line_lengths[len(line_lengths) // 2]
+
+            # Add 5% buffer to account for estimation uncertainty
+            estimated_lines = int((file_size / median_line_length) * 1.05)
+
             return estimated_lines
     except:
         return None
@@ -122,12 +137,22 @@ def process_ultra_optimized(input_file: str, output_file: str, column_indices: D
                     if estimated_total and rate > 0:
                         eta_seconds = (estimated_total - line_count) / rate
                         eta_str = format_time(eta_seconds)
-                        progress_pct = (line_count / estimated_total) * 100
-                        print(f"Progress: {line_count:,} lines ({progress_pct:.1f}%) - "
-                              f"Rate: {rate:,.0f} lines/s - ETA: {eta_str}", file=sys.stderr)
+                        progress_pct = min((line_count / estimated_total) * 100, 100.0)  # Cap at 100%
+
+                        # Create progress bar
+                        bar_width = 30
+                        filled_width = int(bar_width * progress_pct / 100)
+                        bar = '█' * filled_width + '░' * (bar_width - filled_width)
+
+                        # Single-line progress update (overwrites previous line)
+                        print(f"\rProgress: [{bar}] {progress_pct:.1f}% | "
+                              f"{line_count:,} lines | {rate:,.0f} lines/s | ETA: {eta_str}",
+                              end='', file=sys.stderr, flush=True)
                     else:
-                        print(f"Progress: {line_count:,} lines - "
-                              f"Rate: {rate:,.0f} lines/s - Elapsed: {format_time(elapsed)}", file=sys.stderr)
+                        # Fallback without ETA
+                        print(f"\rProgress: {line_count:,} lines | "
+                              f"{rate:,.0f} lines/s | Elapsed: {format_time(elapsed)}",
+                              end='', file=sys.stderr, flush=True)
 
                 # Fast header check using first character
                 if line[0] == '#':
@@ -194,7 +219,8 @@ def process_ultra_optimized(input_file: str, output_file: str, column_indices: D
     total_time = time.time() - start_time
     rate = line_count / total_time if total_time > 0 else 0
 
-    print(f"\nCompleted processing:", file=sys.stderr)
+    # Add newline after progress bar and show completion
+    print(f"\n✅ Completed processing:", file=sys.stderr)
     print(f"  Total lines: {line_count:,}", file=sys.stderr)
     print(f"  Data lines: {data_line_count:,}", file=sys.stderr)
     print(f"  Processing time: {format_time(total_time)}", file=sys.stderr)
