@@ -29,6 +29,7 @@ import subprocess
 import argparse
 import tempfile
 import shutil
+import gzip
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 import signal
@@ -90,6 +91,18 @@ class FragmentCountsPipeline:
         print(f"\nPipeline interrupted (signal {signum})", file=sys.stderr)
         self.cleanup()
         sys.exit(1)
+
+    def _is_gzip_file(self, filepath: Path) -> bool:
+        """Check if file is gzip-compressed by extension and magic number."""
+        if str(filepath).endswith('.gz'):
+            try:
+                with open(filepath, 'rb') as f:
+                    # Check gzip magic number (first 2 bytes should be 0x1f, 0x8b)
+                    magic = f.read(2)
+                    return magic == b'\x1f\x8b'
+            except:
+                return False
+        return False
     
     def _run_command(self, cmd: list, step_name: str, capture_output: bool = False, use_temp_cwd: bool = True) -> subprocess.CompletedProcess:
         """Run a command with error handling and optional output capture."""
@@ -355,7 +368,15 @@ class FragmentCountsPipeline:
         """Execute the complete pipeline."""
         print("Fragment Pairs to Fragment Counts Pipeline", file=sys.stderr)
         print("=" * 60, file=sys.stderr)
-        print(f"Input file: {self.input_file}", file=sys.stderr)
+
+        # Display input file information with compression status
+        if self._is_gzip_file(self.input_file):
+            input_size_mb = self._get_file_size_mb(self.input_file)
+            print(f"Input file: {self.input_file} (gzip-compressed, {input_size_mb:.1f} MB)", file=sys.stderr)
+        else:
+            input_size_mb = self._get_file_size_mb(self.input_file)
+            print(f"Input file: {self.input_file} ({input_size_mb:.1f} MB)", file=sys.stderr)
+
         print(f"Output file: {self.output_file}", file=sys.stderr)
         print(f"Temporary directory: {self.temp_dir}", file=sys.stderr)
         print("=" * 60, file=sys.stderr)

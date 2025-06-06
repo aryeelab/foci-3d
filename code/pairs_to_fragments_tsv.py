@@ -21,7 +21,41 @@ Scalability: Linear scaling with data size
 import sys
 import time
 import os
+import gzip
 from typing import Dict, Optional
+
+def is_gzip_file(filepath: str) -> bool:
+    """Check if file is gzip-compressed by extension and magic number."""
+    if filepath.endswith('.gz'):
+        try:
+            with open(filepath, 'rb') as f:
+                # Check gzip magic number (first 2 bytes should be 0x1f, 0x8b)
+                magic = f.read(2)
+                return magic == b'\x1f\x8b'
+        except:
+            return False
+    return False
+
+def open_file_auto(filepath: str, mode: str = 'r', **kwargs):
+    """Open file automatically detecting gzip compression."""
+    if is_gzip_file(filepath):
+        if 'b' not in mode:
+            mode = mode + 't'  # Text mode for gzip
+        # Remove buffering parameter for gzip files as it's not supported the same way
+        gzip_kwargs = {k: v for k, v in kwargs.items() if k != 'buffering'}
+        return gzip.open(filepath, mode, **gzip_kwargs)
+    else:
+        return open(filepath, mode, **kwargs)
+
+def get_file_size_for_estimation(filepath: str) -> int:
+    """Get file size for line estimation, handling gzip files."""
+    if is_gzip_file(filepath):
+        # For gzip files, we need to estimate based on compressed size
+        # and typical compression ratio for genomic data (~4:1)
+        compressed_size = os.path.getsize(filepath)
+        return compressed_size * 4  # Estimate uncompressed size
+    else:
+        return os.path.getsize(filepath)
 
 def get_column_indices(header_line: str) -> Dict[str, int]:
     """Parse the header line to get the indices of the required columns."""
@@ -48,7 +82,8 @@ def format_time(seconds: float) -> str:
 def estimate_total_lines(file_path: str) -> Optional[int]:
     """Improved estimation of total lines using multiple samples for better accuracy."""
     try:
-        file_size = os.path.getsize(file_path)
+        # Get effective file size (estimated uncompressed size for gzip files)
+        file_size = get_file_size_for_estimation(file_path)
         if file_size == 0:
             return 0
 
@@ -56,32 +91,46 @@ def estimate_total_lines(file_path: str) -> Optional[int]:
         sample_points = [0.1, 0.5, 0.9]  # Sample at 10%, 50%, and 90% through file
         line_lengths = []
 
-        with open(file_path, 'rb') as f:
-            for point in sample_points:
-                # Seek to sample point
-                f.seek(int(file_size * point))
-                if point > 0:
-                    f.readline()  # Skip partial line
-
-                # Read sample
-                sample = f.read(32768)  # 32KB sample
+        # For gzip files, we can't seek efficiently, so use a simpler approach
+        if is_gzip_file(file_path):
+            # For gzip files, read a larger sample from the beginning
+            with open_file_auto(file_path, 'rb') as f:
+                sample = f.read(1024 * 1024)  # 1MB sample
                 if sample:
                     newlines = sample.count(b'\n')
                     if newlines > 0:
                         avg_length = len(sample) / newlines
-                        line_lengths.append(avg_length)
+                        # Estimate based on compressed file size and typical compression ratio
+                        compressed_size = os.path.getsize(file_path)
+                        estimated_lines = int((compressed_size * 4 / avg_length) * 1.05)
+                        return estimated_lines
+        else:
+            # For uncompressed files, use the original multi-point sampling
+            with open(file_path, 'rb') as f:
+                for point in sample_points:
+                    # Seek to sample point
+                    f.seek(int(file_size * point))
+                    if point > 0:
+                        f.readline()  # Skip partial line
 
-            if not line_lengths:
-                return None
+                    # Read sample
+                    sample = f.read(32768)  # 32KB sample
+                    if sample:
+                        newlines = sample.count(b'\n')
+                        if newlines > 0:
+                            avg_length = len(sample) / newlines
+                            line_lengths.append(avg_length)
 
-            # Use median line length for better accuracy
-            line_lengths.sort()
-            median_line_length = line_lengths[len(line_lengths) // 2]
+                if line_lengths:
+                    # Use median line length for better accuracy
+                    line_lengths.sort()
+                    median_line_length = line_lengths[len(line_lengths) // 2]
 
-            # Add 5% buffer to account for estimation uncertainty
-            estimated_lines = int((file_size / median_line_length) * 1.05)
+                    # Add 5% buffer to account for estimation uncertainty
+                    estimated_lines = int((file_size / median_line_length) * 1.05)
+                    return estimated_lines
 
-            return estimated_lines
+        return None
     except:
         return None
 
@@ -105,7 +154,11 @@ def process_ultra_optimized(input_file: str, output_file: str, column_indices: D
     line_count = 0
     data_line_count = 0
 
-    print(f"Processing {input_file} ...", file=sys.stderr)
+    if is_gzip_file(input_file):
+        print(f"Processing {input_file} (gzip-compressed) ...", file=sys.stderr)
+    else:
+        print(f"Processing {input_file} ...", file=sys.stderr)
+
     if estimated_total:
         print(f"Estimated {estimated_total:,} total lines", file=sys.stderr)
 
@@ -114,7 +167,7 @@ def process_ultra_optimized(input_file: str, output_file: str, column_indices: D
     write_buffer_size = 32 * 1024 * 1024  # 32MB write buffer
 
     try:
-        with open(input_file, "r", buffering=read_buffer_size) as infile, \
+        with open_file_auto(input_file, "r", buffering=read_buffer_size) as infile, \
              open(output_file, "w", buffering=write_buffer_size) as outfile:
 
             # Pre-allocate output buffer for better memory efficiency
@@ -235,10 +288,15 @@ def process_ultra_optimized(input_file: str, output_file: str, column_indices: D
     print(f"  Throughput: {pairs_rate:,.0f} pairs/second", file=sys.stderr)
 
     # Performance metrics for large-scale analysis
-    mb_processed = os.path.getsize(input_file) / (1024 * 1024)
-    mb_per_second = mb_processed / total_time
-    print(f"  Data processed: {mb_processed:.1f} MB", file=sys.stderr)
-    print(f"  I/O throughput: {mb_per_second:.1f} MB/second", file=sys.stderr)
+    actual_file_size = os.path.getsize(input_file) / (1024 * 1024)
+    mb_per_second = actual_file_size / total_time
+
+    if is_gzip_file(input_file):
+        print(f"  Data processed: {actual_file_size:.1f} MB (compressed)", file=sys.stderr)
+        print(f"  I/O throughput: {mb_per_second:.1f} MB/second (compressed)", file=sys.stderr)
+    else:
+        print(f"  Data processed: {actual_file_size:.1f} MB", file=sys.stderr)
+        print(f"  I/O throughput: {mb_per_second:.1f} MB/second", file=sys.stderr)
 
 def main():
     if len(sys.argv) != 3:
@@ -263,7 +321,7 @@ def main():
 
     # Optimized header scanning - read header section line by line
     try:
-        with open(input_file, 'r') as f:
+        with open_file_auto(input_file, 'r') as f:
             lines_scanned = 0
             max_header_lines = 5000  # Reasonable limit for header scanning
 
