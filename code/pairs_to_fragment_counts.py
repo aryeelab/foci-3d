@@ -33,6 +33,14 @@ from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 import signal
 
+def format_time_hms(seconds: float) -> str:
+    """Format time in hours:minutes:seconds format with whole seconds."""
+    total_seconds = int(round(seconds))
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    secs = total_seconds % 60
+    return f"{hours}:{minutes:02d}:{secs:02d}"
+
 class PipelineError(Exception):
     """Custom exception for pipeline errors."""
     pass
@@ -79,7 +87,7 @@ class FragmentCountsPipeline:
     
     def _signal_handler(self, signum, frame):
         """Handle interruption signals gracefully."""
-        print(f"\n⚠️  Pipeline interrupted (signal {signum})", file=sys.stderr)
+        print(f"\nPipeline interrupted (signal {signum})", file=sys.stderr)
         self.cleanup()
         sys.exit(1)
     
@@ -122,24 +130,24 @@ class FragmentCountsPipeline:
     
     def step1_convert_pairs_to_fragments(self) -> Dict[str, Any]:
         """Step 1: Convert pairs to fragments using pairs_to_fragments_tsv.py"""
-        print("🔄 Step 1: Converting pairs to fragments...", file=sys.stderr)
+        print("Step 1: Converting pairs to fragments...", file=sys.stderr)
         step_start = time.time()
-        
+
         # Find the pairs_to_fragments_tsv.py script
         script_path = Path(__file__).parent / "pairs_to_fragments_tsv.py"
         if not script_path.exists():
             raise PipelineError(f"pairs_to_fragments_tsv.py not found at {script_path}")
-        
+
         # Run the conversion (use absolute paths and don't change directory)
         cmd = [sys.executable, str(script_path), str(self.input_file.absolute()), str(self.fragments_file)]
         self._run_command(cmd, "Pairs to fragments conversion", use_temp_cwd=False)
-        
+
         # Collect statistics
         step_time = time.time() - step_start
         input_size_mb = self._get_file_size_mb(self.input_file)
         output_size_mb = self._get_file_size_mb(self.fragments_file)
         fragments_count = self._count_lines(self.fragments_file)
-        
+
         stats = {
             'time': step_time,
             'input_size_mb': input_size_mb,
@@ -147,35 +155,36 @@ class FragmentCountsPipeline:
             'fragments_count': fragments_count,
             'throughput_fragments_per_sec': fragments_count / step_time if step_time > 0 else 0
         }
-        
-        print(f"✅ Step 1 completed in {step_time:.1f}s", file=sys.stderr)
-        print(f"   Fragments generated: {fragments_count:,}", file=sys.stderr)
-        print(f"   Throughput: {stats['throughput_fragments_per_sec']:,.0f} fragments/second", file=sys.stderr)
-        
+
+        print(f"  Fragments generated: {fragments_count:,}", file=sys.stderr)
+        print(f"  Throughput: {stats['throughput_fragments_per_sec']:,.0f} fragments/second", file=sys.stderr)
+        print(f"  Step 1 completed in {format_time_hms(step_time)}", file=sys.stderr)
+        print("", file=sys.stderr)  # Add blank line for separation
+
         return stats
     
     def step2_sort_fragments(self) -> Dict[str, Any]:
         """\nStep 2: Sort fragments by chromosome, midpoint, and length"""
-        print("🔄 Step 2: Sorting fragments...", file=sys.stderr)
+        print("Step 2: Sorting fragments...", file=sys.stderr)
         step_start = time.time()
-        
+
         # Sort command: sort -k1,1 -k2,2n -k3,3n
         cmd = ['sort', '-k1,1', '-k2,2n', '-k3,3n', str(self.fragments_file)]
-        
+
         # Run sort and redirect output
         with open(self.sorted_fragments_file, 'w') as outfile:
             process = subprocess.Popen(cmd, stdout=outfile, stderr=subprocess.PIPE, text=True)
             _, stderr = process.communicate()
-            
+
             if process.returncode != 0:
                 raise PipelineError(f"Sort failed with exit code {process.returncode}\nError: {stderr}")
-        
+
         # Collect statistics
         step_time = time.time() - step_start
         input_size_mb = self._get_file_size_mb(self.fragments_file)
         output_size_mb = self._get_file_size_mb(self.sorted_fragments_file)
         fragments_count = self._count_lines(self.sorted_fragments_file)
-        
+
         stats = {
             'time': step_time,
             'input_size_mb': input_size_mb,
@@ -183,46 +192,47 @@ class FragmentCountsPipeline:
             'fragments_count': fragments_count,
             'throughput_mb_per_sec': input_size_mb / step_time if step_time > 0 else 0
         }
-        
-        print(f"✅ Step 2 completed in {step_time:.1f}s", file=sys.stderr)
+
         print(f"   Data sorted: {input_size_mb:.1f} MB", file=sys.stderr)
         print(f"   Throughput: {stats['throughput_mb_per_sec']:.1f} MB/second", file=sys.stderr)
+        print(f"   Step 2 completed in {format_time_hms(step_time)}", file=sys.stderr)
+        print("", file=sys.stderr)  # Add blank line for separation
         
         return stats
     
     def step3_count_fragments(self) -> Dict[str, Any]:
-        """\nStep 3: Count fragments per (chromosome, midpoint, length) combination"""
-        print("🔄 Step 3: Counting fragments...", file=sys.stderr)
+        """\nStep 3: Count fragments per (chromosome, midpoint, length)"""
+        print("Step 3: Counting fragments per (chromosome, midpoint, length)...", file=sys.stderr)
         step_start = time.time()
-        
+
         # Create header
         with open(self.counts_file, 'w') as outfile:
             outfile.write("#chrom\tmidpoint\tlength\tcount\n")
-        
+
         # Count unique fragments: uniq -c | awk
         cmd1 = ['uniq', '-c', str(self.sorted_fragments_file)]
         cmd2 = ['awk', '-v', 'OFS=\t', '{print $2, $3, $4, $1}']
-        
+
         # Pipeline: uniq -c | awk >> counts.tsv
         with open(self.counts_file, 'a') as outfile:
             proc1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             proc2 = subprocess.Popen(cmd2, stdin=proc1.stdout, stdout=outfile, stderr=subprocess.PIPE, text=True)
-            
+
             proc1.stdout.close()  # Allow proc1 to receive SIGPIPE if proc2 exits
             _, stderr2 = proc2.communicate()
             _, stderr1 = proc1.communicate()
-            
+
             if proc1.returncode != 0:
                 raise PipelineError(f"uniq failed with exit code {proc1.returncode}\nError: {stderr1}")
             if proc2.returncode != 0:
                 raise PipelineError(f"awk failed with exit code {proc2.returncode}\nError: {stderr2}")
-        
+
         # Collect statistics
         step_time = time.time() - step_start
         input_size_mb = self._get_file_size_mb(self.sorted_fragments_file)
         output_size_mb = self._get_file_size_mb(self.counts_file)
         counts_lines = self._count_lines(self.counts_file) - 1  # Subtract header
-        
+
         stats = {
             'time': step_time,
             'input_size_mb': input_size_mb,
@@ -230,16 +240,17 @@ class FragmentCountsPipeline:
             'unique_fragments': counts_lines,
             'throughput_mb_per_sec': input_size_mb / step_time if step_time > 0 else 0
         }
-        
-        print(f"✅ Step 3 completed in {step_time:.1f}s", file=sys.stderr)
+
         print(f"   Unique fragment combinations: {counts_lines:,}", file=sys.stderr)
         print(f"   Throughput: {stats['throughput_mb_per_sec']:.1f} MB/second", file=sys.stderr)
+        print(f"   Step 3 completed in {format_time_hms(step_time)}", file=sys.stderr)
+        print("", file=sys.stderr)  # Add blank line for separation
         
         return stats
 
     def step4_create_tabix_index(self) -> Dict[str, Any]:
         """\nStep 4: Create tabix-indexed format"""
-        print("🔄 Step 4: Creating tabix index...", file=sys.stderr)
+        print("Step 4: Creating tabix index...", file=sys.stderr)
         step_start = time.time()
 
         # Step 4a: bgzip compression
@@ -277,15 +288,16 @@ class FragmentCountsPipeline:
             'throughput_mb_per_sec': input_size_mb / step_time if step_time > 0 else 0
         }
 
-        print(f"✅ Step 4 completed in {step_time:.1f}s", file=sys.stderr)
         print(f"   Compression: {input_size_mb:.1f} MB → {output_size_mb:.1f} MB ({compression_ratio:.1f}x)", file=sys.stderr)
         print(f"   Index created: {self.output_file}.tbi", file=sys.stderr)
+        print(f"   Step 4 completed in {format_time_hms(step_time)}", file=sys.stderr)
+        print("", file=sys.stderr)  # Add blank line for separation
 
         return stats
 
     def step5_cleanup(self) -> Dict[str, Any]:
         """\nStep 5: Remove intermediate temporary files"""
-        print("🔄 Step 5: Cleaning up intermediate files...", file=sys.stderr)
+        print("Step 5: Cleaning up intermediate files...", file=sys.stderr)
         step_start = time.time()
 
         files_to_remove = []
@@ -311,7 +323,7 @@ class FragmentCountsPipeline:
         except OSError:
             # Directory not empty (keeping intermediates)
             if not self.keep_intermediates:
-                print(f"⚠️  Warning: Could not remove temp directory {self.temp_dir}", file=sys.stderr)
+                print(f"Warning: Could not remove temp directory {self.temp_dir}", file=sys.stderr)
 
         step_time = time.time() - step_start
 
@@ -323,10 +335,11 @@ class FragmentCountsPipeline:
         }
 
         if self.keep_intermediates:
-            print(f"✅ Step 5 completed in {step_time:.1f}s (intermediates kept in {self.temp_dir})", file=sys.stderr)
+            print(f"   Intermediates kept in: {self.temp_dir}", file=sys.stderr)
         else:
-            print(f"✅ Step 5 completed in {step_time:.1f}s", file=sys.stderr)
             print(f"   Space freed: {total_size_mb:.1f} MB", file=sys.stderr)
+        print(f"    Step 5 completed in {format_time_hms(step_time)}", file=sys.stderr)
+        print("", file=sys.stderr)  # Add blank line for separation
 
         return stats
 
@@ -336,16 +349,17 @@ class FragmentCountsPipeline:
             if self.temp_dir.exists():
                 shutil.rmtree(self.temp_dir)
         except Exception as e:
-            print(f"⚠️  Warning: Cleanup failed: {e}", file=sys.stderr)
+            print(f"Warning: Cleanup failed: {e}", file=sys.stderr)
 
     def run_pipeline(self) -> Dict[str, Any]:
         """Execute the complete pipeline."""
-        print("Processing fragment pairs to fragment counts", file=sys.stderr)
+        print("Fragment Pairs to Fragment Counts Pipeline", file=sys.stderr)
         print("=" * 60, file=sys.stderr)
         print(f"Input file: {self.input_file}", file=sys.stderr)
         print(f"Output file: {self.output_file}", file=sys.stderr)
         print(f"Temporary directory: {self.temp_dir}", file=sys.stderr)
         print("=" * 60, file=sys.stderr)
+        print("", file=sys.stderr)  # Add blank line for separation
 
         try:
             # Execute all pipeline steps
@@ -364,21 +378,21 @@ class FragmentCountsPipeline:
             return self.step_stats
 
         except Exception as e:
-            print(f"\n❌ Pipeline failed: {e}", file=sys.stderr)
+            print(f"\nPipeline failed: {e}", file=sys.stderr)
             self.cleanup()
             raise
 
     def _generate_performance_report(self, total_time: float):
         """Generate comprehensive performance report."""
-        print("\n" + "=" * 60, file=sys.stderr)
-        print("🎉 PIPELINE COMPLETED SUCCESSFULLY", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+        print("PIPELINE COMPLETED SUCCESSFULLY", file=sys.stderr)
         print("=" * 60, file=sys.stderr)
 
         # File information
         input_size_mb = self._get_file_size_mb(self.input_file)
         output_size_mb = self._get_file_size_mb(self.output_file)
 
-        print(f"📁 File Information:", file=sys.stderr)
+        print(f"File Information:", file=sys.stderr)
         print(f"   Input file: {self.input_file} ({input_size_mb:.1f} MB)", file=sys.stderr)
         print(f"   Output file: {self.output_file} ({output_size_mb:.1f} MB)", file=sys.stderr)
         print(f"   Index file: {self.output_file}.tbi", file=sys.stderr)
@@ -387,13 +401,12 @@ class FragmentCountsPipeline:
         fragments_processed = self.step_stats['step1']['fragments_count']
         unique_fragments = self.step_stats['step3']['unique_fragments']
 
-        print(f"\n📊 Processing Statistics:", file=sys.stderr)
+        print(f"\nProcessing Statistics:", file=sys.stderr)
         print(f"   Total fragments processed: {fragments_processed:,}", file=sys.stderr)
         print(f"   Unique fragment combinations: {unique_fragments:,}", file=sys.stderr)
-        print(f"   Compression ratio: {self.step_stats['step4']['compression_ratio']:.1f}x", file=sys.stderr)
 
         # Timing breakdown
-        print(f"\n⏱️  Timing Breakdown:", file=sys.stderr)
+        print(f"\nTiming Breakdown:", file=sys.stderr)
         step_names = {
             'step1': 'Convert pairs to fragments',
             'step2': 'Sort fragments',
@@ -405,20 +418,20 @@ class FragmentCountsPipeline:
         for step_key, step_name in step_names.items():
             step_time = self.step_stats[step_key]['time']
             percentage = (step_time / total_time) * 100
-            print(f"   {step_name}: {step_time:.1f}s ({percentage:.1f}%)", file=sys.stderr)
+            print(f"   {step_name}: {format_time_hms(step_time)} ({percentage:.1f}%)", file=sys.stderr)
 
-        print(f"   Total pipeline time: {total_time:.1f}s", file=sys.stderr)
+        print(f"   Total pipeline time: {format_time_hms(total_time)}", file=sys.stderr)
 
         # Throughput metrics
         overall_throughput = fragments_processed / total_time if total_time > 0 else 0
 
-        print(f"\n🚀 Performance Metrics:", file=sys.stderr)
+        print(f"\nPerformance Metrics:", file=sys.stderr)
         print(f"   Overall throughput: {overall_throughput:,.0f} fragments/second", file=sys.stderr)
         print(f"   Data throughput: {input_size_mb / total_time:.1f} MB/second", file=sys.stderr)
 
         # Success message
-        print(f"\n✅ Pipeline completed successfully!", file=sys.stderr)
-        print(f"   Ready for footprint analysis: {self.output_file}", file=sys.stderr)
+        print(f"\nPipeline completed successfully!", file=sys.stderr)
+        print(f"Ready for footprint analysis: {self.output_file}", file=sys.stderr)
 
 
 def main():
@@ -494,7 +507,7 @@ Performance:
 
     # Validate input file
     if not os.path.exists(args.input_file):
-        print(f"❌ Error: Input file not found: {args.input_file}", file=sys.stderr)
+        print(f"Error: Input file not found: {args.input_file}", file=sys.stderr)
         sys.exit(1)
 
     # Check for required external tools
@@ -511,7 +524,7 @@ Performance:
                 missing_tools.append(tool)
 
     if missing_tools:
-        print(f"❌ Error: Required tools not found: {', '.join(missing_tools)}", file=sys.stderr)
+        print(f"Error: Required tools not found: {', '.join(missing_tools)}", file=sys.stderr)
         print("Please install the missing tools and ensure they are in your PATH.", file=sys.stderr)
         sys.exit(1)
 
@@ -527,13 +540,13 @@ Performance:
         pipeline.run_pipeline()
 
     except PipelineError as e:
-        print(f"❌ Pipeline error: {e}", file=sys.stderr)
+        print(f"Pipeline error: {e}", file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
-        print(f"\n⚠️  Pipeline interrupted by user", file=sys.stderr)
+        print(f"\nPipeline interrupted by user", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
-        print(f"❌ Unexpected error: {e}", file=sys.stderr)
+        print(f"Unexpected error: {e}", file=sys.stderr)
         sys.exit(1)
 
 

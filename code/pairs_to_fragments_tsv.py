@@ -229,7 +229,7 @@ def process_ultra_optimized(input_file: str, output_file: str, column_indices: D
               end='', file=sys.stderr, flush=True)
 
     # Add newline after progress bar and show completion
-    print(f"\n✅ Completed processing:", file=sys.stderr)
+    print(f"\nCompleted processing:", file=sys.stderr)
     print(f"  Pairs: {data_line_count:,}", file=sys.stderr)
     print(f"  Processing time: {format_time(total_time)}", file=sys.stderr)
     print(f"  Throughput: {pairs_rate:,.0f} pairs/second", file=sys.stderr)
