@@ -132,10 +132,11 @@ def process_ultra_optimized(input_file: str, output_file: str, column_indices: D
                 if line_count & 0xFFFFF == 0:  # Check every ~1M lines using bitwise AND
                     current_time = time.time()
                     elapsed = current_time - start_time
-                    rate = line_count / elapsed
+                    pairs_rate = data_line_count / elapsed if elapsed > 0 else 0
 
-                    if estimated_total and rate > 0:
-                        eta_seconds = (estimated_total - line_count) / rate
+                    if estimated_total and pairs_rate > 0:
+                        # Estimate progress based on line_count vs estimated_total (for file position)
+                        eta_seconds = (estimated_total - line_count) / (line_count / elapsed) if line_count > 0 else 0
                         eta_str = format_time(eta_seconds)
                         progress_pct = min((line_count / estimated_total) * 100, 100.0)  # Cap at 100%
 
@@ -146,12 +147,12 @@ def process_ultra_optimized(input_file: str, output_file: str, column_indices: D
 
                         # Single-line progress update (overwrites previous line)
                         print(f"\rProgress: [{bar}] {progress_pct:.1f}% | "
-                              f"{line_count:,} lines | {rate:,.0f} pairs/s | ETA: {eta_str}",
+                              f"{data_line_count:,} pairs | {pairs_rate:,.0f} pairs/s | ETA: {eta_str}",
                               end='', file=sys.stderr, flush=True)
                     else:
                         # Fallback without ETA
-                        print(f"\rProgress: {line_count:,} lines | "
-                              f"{rate:,.0f} pairs/s | Elapsed: {format_time(elapsed)}",
+                        print(f"\rProgress: {data_line_count:,} pairs | "
+                              f"{pairs_rate:,.0f} pairs/s | Elapsed: {format_time(elapsed)}",
                               end='', file=sys.stderr, flush=True)
 
                 # Fast header check using first character
@@ -217,14 +218,21 @@ def process_ultra_optimized(input_file: str, output_file: str, column_indices: D
 
     # Final statistics
     total_time = time.time() - start_time
-    rate = line_count / total_time if total_time > 0 else 0
+    pairs_rate = data_line_count / total_time if total_time > 0 else 0
+
+    # Display final 100% completion progress bar
+    if estimated_total:
+        bar_width = 30
+        bar = '█' * bar_width  # Full progress bar
+        print(f"\rProgress: [{bar}] 100.0% | "
+              f"{data_line_count:,} pairs | {pairs_rate:,.0f} pairs/s | Complete",
+              end='', file=sys.stderr, flush=True)
 
     # Add newline after progress bar and show completion
     print(f"\n✅ Completed processing:", file=sys.stderr)
     print(f"  Pairs: {data_line_count:,}", file=sys.stderr)
     print(f"  Processing time: {format_time(total_time)}", file=sys.stderr)
-    print(f"  Average rate: {rate:,.0f} pairs/second", file=sys.stderr)
-    print(f"  Throughput: {data_line_count/total_time:,.0f} pairs/second", file=sys.stderr)
+    print(f"  Throughput: {pairs_rate:,.0f} pairs/second", file=sys.stderr)
 
     # Performance metrics for large-scale analysis
     mb_processed = os.path.getsize(input_file) / (1024 * 1024)
@@ -267,7 +275,17 @@ def main():
                     try:
                         column_indices = get_column_indices(line)
                         header_found = True
-                        print(f"Using column indices: {column_indices}", file=sys.stderr)
+
+                        # Display only the 6 essential columns used for fragment processing
+                        essential_columns = {
+                            'chrom1': column_indices['chrom1'],
+                            'pos51': column_indices['pos51'],
+                            'pos31': column_indices['pos31'],
+                            'chrom2': column_indices['chrom2'],
+                            'pos52': column_indices['pos52'],
+                            'pos32': column_indices['pos32']
+                        }
+                        print(f"Using column indices: {essential_columns}", file=sys.stderr)
                     except ValueError as e:
                         print(f"Warning: {e}. Using default column indices.", file=sys.stderr)
                     break
@@ -282,7 +300,16 @@ def main():
         print(f"Warning: Could not scan for header: {e}", file=sys.stderr)
 
     if not header_found:
-        print(f"No header line found. Using default column indices: {column_indices}", file=sys.stderr)
+        # Display only the 6 essential columns used for fragment processing
+        essential_columns = {
+            'chrom1': column_indices['chrom1'],
+            'pos51': column_indices['pos51'],
+            'pos31': column_indices['pos31'],
+            'chrom2': column_indices['chrom2'],
+            'pos52': column_indices['pos52'],
+            'pos32': column_indices['pos32']
+        }
+        print(f"No header line found. Using default column indices: {essential_columns}", file=sys.stderr)
 
     # Process the file
     process_ultra_optimized(input_file, output_file, column_indices)
