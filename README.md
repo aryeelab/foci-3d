@@ -52,60 +52,20 @@ pairtools sort | \
 pairtools dedup -o ${SAMPLE}.pairs
 ```
 
-#### Step 2: Fragment pairs (.pairs) to fragment counts by position and length (.counts.tsv.gz)
+#### Step 2: Fragment pairs (.pairs.gz) to fragment counts by position and length (.counts.tsv.gz)
 ```bash
-# Computes a sparse matrix of fragment counts per chrom, midpoint, length bin
+# Computes a 2D histogram (stored as a sparse matrix) of fragment counts per position by length bin
 # Output is a TSV of chrom \t pos \t fragment_length \t count
 # This file is bgzip compressed and tabix indexed
 
-# Convert the pairs file to a fragments file (one fragment per line with chrom, midpoint and length columns)
-python code/pairs_to_fragments_tsv.py ${SAMPLE}.pairs ${SAMPLE}.fragments.tsv
+python code/pairs_to_fragment_counts.py ${SAMPLE}.pairs.gz -o ${SAMPLE}.counts.tsv.gz
 
-# Note that `pairs_to_fragments_tsv.py` is an AI (Claude Sonnet 4)-optimized version of the original (slower and easier to read) `pairs_to_fragments_tsv_simple.py`. The output is identical.
-
-# Sort the fragments file
-sort -k1,1 -k2,2n -k3,3n ${SAMPLE}.fragments.tsv > ${SAMPLE}.fragments.sorted.tsv
-
-# Count the number of fragments per chrom, midpoint, length bin
-echo "#chrom\tmidpoint\tlength\tcount" > ${SAMPLE}.counts.tsv
-uniq -c ${SAMPLE}.fragments.sorted.tsv | awk -v OFS='\t' '{print $2, $3, $4, $1}' >> ${SAMPLE}.counts.tsv
-
-# Convert the counts file to tabix format
-bgzip -c ${SAMPLE}.counts.tsv > ${SAMPLE}.counts.tsv.gz
-tabix -s 1 -b 2 -e 2 ${SAMPLE}.counts.tsv.gz
-
-date
-
-# Remove temp files
-rm ${SAMPLE}.fragments.tsv ${SAMPLE}.fragments.sorted.tsv ${SAMPLE}.counts.tsv
 ```
 
-The Step 2 preprocessing steps can be timed using the `code/time_preprocessing.py` script. On an M1 Mac, the "Compute fragment midpoint, length counts" pipeline above takes ~2.5s for 1M fragments or about 45 mins for 1B fragments (~50X coverage when using 150bp reads).
-```bash
-python code/time_preprocessing.py ${SAMPLE}.pairs --output temp.counts.tsv.gz
-```
+#### Reading fragment counts into R 
 
-Example timing output:
-```
-Processing Summary:
-  Input pairs file: data/MicroC_3hrDMSO.mapped.pairs
-  Output counts file: temp.counts.tsv.gz
-  Fragments processed: 4377599010
 
-Timing Summary:
-  Pairs To Fragments: 11138.49 seconds (63.4%)
-  Sort Fragments: 3548.80 seconds (20.2%)
-  Count Fragments: 1462.29 seconds (8.3%)
-  Bgzip: 1024.17 seconds (5.8%)
-  Tabix: 378.32 seconds (2.2%)
-  Copy Output: 27.13 seconds (0.2%)
-  Total Processing Time: 17579.21 seconds
-  Total Elapsed Time: 18217.97 seconds
 
-Cleaning up temporary files...
-Running cleanup...
-  Completed in 36.63 seconds
-```
 
 ### Testing
 
