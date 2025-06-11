@@ -99,18 +99,6 @@ python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o 
 python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
     --threshold 15.0 --sigma 2.0 --min-size 10 --num-cores 4
 
-# Use pre-calculated normalization factors
-python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
-    --norm-factors norm_factors.pkl
-
-# Save normalization factors for future use
-python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
-    --save-norm-factors norm_factors.pkl
-
-# Enable verbose output with step-by-step timing
-python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
-    --verbose
-
 # Custom memory limit and batch size
 python code/detect_footprints.py -i data/large_dataset.counts.tsv.gz -o footprints.tsv \
     --max-memory-gb 16 --batch-size 1000 --num-cores 6
@@ -142,11 +130,29 @@ For interactive analysis and visualization, see `footprinting.ipynb`.
 
 After preprocessing reads as above, the smooothed counts and detected footprints can be visualized. 
 
+```python
+from footprinting import get_count_matrix, plot_count_matrix
+
+counts_gz = 'test_data/mesc_microc_test.counts.tsv.gz'
+chrom = 'chr8'
+start_bp = 23_237_000
+end_bp = 23_238_000
+
+count_mat, _ = get_count_matrix(counts_gz, chrom, start_bp, end_bp, 
+                                fragment_len_min=25, fragment_len_max=160, sigma=10)
+
+plot_count_matrix(count_mat, xtick_spacing=200, figsize=(10, 1.5))
+```
+
+![MNase Footprint Visualization Example](images/readme_example.png)
+
+*Example footprint visualization showing MNase fragment length vs genomic position. The heatmap displays fragment count intensity across different fragment lengths (y-axis) and genomic coordinates (x-axis). Darker regions indicate higher fragment counts, with nucleosomes at the ~150bp length and TFs at the <80bp length.*
+
 ```bash
 # See footprinting.ipynb for examples
 ```
 
-### Unit tests
+## Unit tests
 
 To run the test suite:
 ```bash

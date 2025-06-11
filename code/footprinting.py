@@ -1028,7 +1028,7 @@ def plot_count_matrix(
         xticklabels=False,
         yticklabels=True
     )
-    # remove any x-axis ticks/labels on heatmap
+    # Initially remove x-axis ticks/labels on heatmap (will be added back if no tracks)
     ax_heat.set_xticks([])
     ax_heat.set_xlabel('')
     ax_heat.xaxis.set_tick_params(bottom=False, labelbottom=False)
@@ -1117,12 +1117,17 @@ def plot_count_matrix(
                 ax_tr.set_xlabel('Position (bp)')
             else:
                 ax_tr.set_xticks([])
+    else:
+        # No tracks provided: show x-axis on the heatmap itself
+        ax_heat.set_xticks(xtick_positions)
+        ax_heat.set_xticklabels(xtick_labels, rotation=0, ha='center')
+        ax_heat.set_xlabel('Position (bp)')
+        ax_heat.xaxis.set_tick_params(bottom=True, labelbottom=True)
 
     if return_fig:
         return fig
     else:
         plt.show()
-    plt.show()
 
 def get_valid_windows(counts_gz, chromosomes=None, window_overlap_bp=0, window_size=1024, maxgap=1000, max_windows=None):
     """
