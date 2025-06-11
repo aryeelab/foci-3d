@@ -31,9 +31,7 @@ bgzip -@ 4 GRCh38.primary_assembly.genome.fa
 samtools faidx GRCh38.primary_assembly.genome.fa.gz
 ```
 
-### Preprocess read pairs to fragment counts
-
-#### Step 1: Read pairs (bam) to fragment pairs (.pairs)
+### Step 1: Read pairs (bam) to fragment pairs (.pairs)
 ```bash
 conda activate footprint-tools
 
@@ -52,7 +50,16 @@ pairtools sort | \
 pairtools dedup -o ${SAMPLE}.pairs
 ```
 
-#### Step 2: Fragment pairs (.pairs.gz) to fragment counts by position and length (.counts.tsv.gz)
+### Step 2: Fragment pairs (.pairs.gz) to fragment counts by position and length (.counts.tsv.gz)
+
+The `pairs_to_fragment_counts.py` script provides an automated pipeline that converts genomic pairs files into tabix-indexed fragment count matrices for downstream footprint analysis. Processing includes:
+(1) convert pairs to individual fragments using midpoint position and length (instead of fragment start, end)
+(2) sort fragments by chromosome, position, and length
+(3) count unique fragment chrom, pos, lengthcombinations to create a sparse count matrix
+(4) compress the output using bgzip and create a tabix index for fast random access
+(5) clean up intermediate files to conserve disk space. 
+
+
 ```bash
 # Computes a 2D histogram (stored as a sparse matrix) of fragment counts per position by length bin
 # Output is a TSV of chrom \t pos \t fragment_length \t count
