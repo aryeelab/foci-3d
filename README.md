@@ -89,27 +89,6 @@ The `detect_footprints.py` script provides a command line interface for footprin
 # Basic usage: Process all chromosomes
 python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv
 
-# Process specific chromosomes
-python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8
-
-# Process specific genomic regions
-python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8:22000000-23000000
-
-# Adjust detection parameters
-python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
-    --threshold 15.0 --sigma 2.0 --min-size 10 --num-cores 4
-
-# Custom memory limit and batch size
-python code/detect_footprints.py -i data/large_dataset.counts.tsv.gz -o footprints.tsv \
-    --max-memory-gb 16 --batch-size 1000 --num-cores 6
-
-# Use stricter 5% FDR threshold (default is 10% FDR)
-python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
-    --qcutoff 0.05
-
-# Enable detailed timing and performance statistics
-python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
-    --timing
 ```
 
 **Output format:**
@@ -150,6 +129,35 @@ plot_count_matrix(count_mat, xtick_spacing=200, figsize=(10, 1.5))
 
 ```bash
 # See footprinting.ipynb for examples
+```
+
+## Detecting footprints - Advanced usage examples
+
+```
+# View all options
+python code/detect_footprints.py -h
+
+# Process specific chromosomes
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8
+
+# Process specific genomic regions
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8:22000000-23000000
+
+# Adjust detection parameters
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
+    --threshold 15.0 --sigma 2.0 --min-size 10 --num-cores 4
+
+# Custom memory limit and batch size
+python code/detect_footprints.py -i data/large_dataset.counts.tsv.gz -o footprints.tsv \
+    --max-memory-gb 16 --batch-size 1000 --num-cores 6
+
+# Use stricter 5% FDR threshold (default is 10% FDR)
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
+    --qcutoff 0.05
+
+# Enable detailed timing and performance statistics
+python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
+    --timing
 ```
 
 ## Unit tests
