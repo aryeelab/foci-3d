@@ -2,10 +2,9 @@
 
 This toolkit provides tools for analyzing and modeling DNA footprints from Micro-C and Region Capture Micro-C (RCMC) data. It includes utilities for preprocessing BAMs, visualizing footprints, and building predictive models that connect chromatin accessibility patterns to transcription initiation (PRO-Cap) signals.
 
-## Footprint preprocessing tools
+## Footprint preprocessing
 
-These steps preprocess Micro-C data to fragment counts. Counts are binned by fragment length and position (mid-point).
-
+These steps preprocess Micro-C data (in BAM format) to fragment counts. Counts are binned by fragment length and position (mid-point).
 
 ### Step 0: Setup
 
@@ -69,32 +68,21 @@ python code/pairs_to_fragment_counts.py ${SAMPLE}.pairs.gz -o ${SAMPLE}.counts.t
 
 ```
 
+## Detecting footprints
 
-See the [tests/README.md](tests/README.md) file for more information on running and adding tests.
-
-### Visualizing footprints
-
-After preprocessing reads as above, footprints (i.e. smoothed fragment counts) can be visualized. The 2D matrix of counts (x:axis = genomic position, y:axis = fragment length) can be row normalized (scaled by the average count per position for that fragment length) and then smoothed with a Gaussian kernel (sigma = 10 by default).
-
-```bash
-# See footprinting.ipynb for examples
-```
-
-#### Command line footprint detection
-
-The blob detection algorithm:
-1. Applies Gaussian smoothing to the input matrix
-2. Creates a binary mask of regions above the threshold value
-3. Uses a watershed algorithm to separate adjacent blobs
-4. Calculates properties for each blob:
+The footprint detection pipeline uses a blob detection algorithm:
+1. Normalizes counts by the average
+2. Applies 2D Gaussian smoothing to the normalized counts matrix (fragment_length x pos)
+3. Creates a binary mask of regions above the threshold value
+4. Uses a watershed algorithm to separate adjacent blobs
+5. Calculates properties for each blob:
    - Peak position (fragment_length, basepair_position)
    - Size (number of pixels)
    - Maximum signal intensity
    - Mean signal intensity
    - Total signal (sum of all intensity values)
 
-
-The `detect_footprints.py` script provides a command line interface for batch footprint detection with statistical significance testing:
+The `detect_footprints.py` script provides a command line interface for footprint detection with statistical significance testing:
 
 ```bash
 
@@ -136,49 +124,8 @@ python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o 
     --timing
 ```
 
-
-Example timing output:
-```
-============================================================
-PROCESSING SUMMARY
-============================================================
-
-Timing Information:
-------------------------------
-  Region parsing and validation : 0.000s
-  Normalization factor calculation: 0.186s
-  Footprint detection           : 0.162s
-  P-value calculation           : 0.018s
-  Saving results                : 0.007s
-  Total execution time          : 0.374s
-
-Processing Statistics:
-------------------------------
-  Window size (bp)              : 10,000
-  Number of regions             : 1
-  Total base pairs in regions   : 200,000
-  Estimated processing windows  : 20
-  Total footprints detected     : 52
-  Footprints per Kb             : 0.260
-  Significant footprints (5% FDR): 1
-  Peak memory usage             : 283.8 MB
-============================================================
-```
-
-**Memory Management for Large Datasets:**
-The script includes intelligent memory management features specifically designed for processing large genomic datasets on systems with limited memory (e.g., M1 Macs):
-
-- **Automatic memory detection**: Auto-detects available system memory and sets conservative limits
-- **Adaptive batch sizing**: Dynamically adjusts batch sizes based on available memory and dataset size
-- **Low-memory mode**: `--low-memory` flag enables conservative settings (smaller batches, fewer cores)
-- **Custom memory limits**: `--max-memory-gb` allows manual memory limit specification
-- **Batch processing**: `--batch-size` controls how many windows are processed simultaneously
-- **Memory monitoring**: Real-time memory usage tracking and garbage collection between batches
-
-
-
 **Output format:**
-The script outputs a compact TSV file with the following columns:
+The script outputs footprints in a TSV file with the following columns:
 - `chrom`: Chromosome name
 - `position`: Genomic position of footprint peak
 - `fragment_length`: Fragment length at peak intensity
@@ -189,11 +136,15 @@ The script outputs a compact TSV file with the following columns:
 - `p_value`: Statistical significance (full precision, if calculated)
 - `q_value`: FDR-corrected p-value (full precision, if calculated)
 
-Note: The `window_start` and `window_end` columns have been removed to reduce file size, as these are internal processing details not needed for downstream analysis.
-
 For interactive analysis and visualization, see `footprinting.ipynb`.
 
+### Visualizing footprints
 
+After preprocessing reads as above, the smooothed counts and detected footprints can be visualized. 
+
+```bash
+# See footprinting.ipynb for examples
+```
 
 ### Unit tests
 
@@ -207,9 +158,7 @@ cd tests
 python3 run_tests.py
 ```
 
-See `tests/README.md` for more information on running and adding tests.
-
-
+See the [tests/README.md](tests/README.md) file for more information on running and adding tests.
 
 
 ## Exploratory predictive modeling of footprints -> PRO-Cap signal

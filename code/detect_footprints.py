@@ -1142,7 +1142,14 @@ Examples:
     if timing_stats:
         timing_stats.start_timer("Saving results")
     print(f"Saving {len(formatted_footprints):,} footprints to {args.output}")
-    formatted_footprints.to_csv(args.output, sep='\t', index=False)
+
+    # Write scale factors as the first line, then the DataFrame
+    with open(args.output, 'w') as f:
+        # Write scale factors header as the first line
+        f.write(f"# scale_factors: {scale_factor_dict}\n")
+        # Write the DataFrame
+        formatted_footprints.to_csv(f, sep='\t', index=False)
+
     if timing_stats:
         timing_stats.end_timer("Saving results")
 
