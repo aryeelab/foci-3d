@@ -62,23 +62,6 @@ python code/pairs_to_fragment_counts.py ${SAMPLE}.pairs.gz -o ${SAMPLE}.counts.t
 
 ```
 
-#### Reading fragment counts into R 
-
-
-
-
-### Testing
-
-To run the test suite:
-
-```bash
-# Activate the footprint-tools environment
-conda activate footprint-tools
-
-# Run all tests
-cd tests
-python3 run_tests.py
-```
 
 See the [tests/README.md](tests/README.md) file for more information on running and adding tests.
 
@@ -129,59 +112,23 @@ python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o 
 python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
     --save-norm-factors norm_factors.pkl
 
-# Skip statistical significance testing (faster)
-python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
-    --skip-pvalues
-
-# Enable detailed timing and performance statistics
-python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
-    --timing
-
 # Enable verbose output with step-by-step timing
 python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
     --verbose
-
-# Memory management for large datasets (recommended for >100k windows)
-python code/detect_footprints.py -i data/large_dataset.counts.tsv.gz -o footprints.tsv \
-    --low-memory --batch-size 500 --num-cores 4 --timing
 
 # Custom memory limit and batch size
 python code/detect_footprints.py -i data/large_dataset.counts.tsv.gz -o footprints.tsv \
     --max-memory-gb 16 --batch-size 1000 --num-cores 6
 
-# Filter footprints by q-value (FDR) threshold - default 10% FDR
-python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8
-
-# Use stricter 5% FDR threshold
+# Use stricter 5% FDR threshold (default is 10% FDR)
 python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
     --qcutoff 0.05
 
-# Use more lenient 20% FDR threshold
+# Enable detailed timing and performance statistics
 python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
-    --qcutoff 0.2
-
-# Very strict filtering (0.1% FDR)
-python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 \
-    --qcutoff 0.001
+    --timing
 ```
 
-**Key features:**
-- **Region specification**: Support for whole chromosomes (`chr1,chr2`) or coordinate ranges (`chr1:1000000-2000000`)
-- **Statistical testing**: Automatic p-value and q-value calculation using Weibull distribution fitting
-- **Q-value filtering**: Customizable FDR thresholds with `--qcutoff` for controlling statistical stringency
-- **Parallel processing**: Multi-core support for faster processing of large datasets
-- **Memory management**: Intelligent batching and memory monitoring for large datasets (M1 Mac optimized)
-- **Normalization**: Automatic calculation or loading of fragment length-specific normalization factors
-- **Flexible parameters**: Adjustable detection thresholds, smoothing, and fragment length ranges
-- **Performance monitoring**: Comprehensive timing and processing statistics with `--timing` and `--verbose` options
-
-**Timing and Performance Features:**
-The script includes comprehensive timing and performance monitoring capabilities:
-- **Detailed timing**: Track time spent in each processing step (normalization, detection, p-value calculation, I/O)
-- **Processing statistics**: Report window counts, base pairs processed, footprints per Kb, and memory usage
-- **Verbose mode**: Step-by-step timing output with `--verbose` flag
-- **Summary report**: Consolidated timing and statistics summary with `--timing` flag
-- **Memory monitoring**: Peak memory usage tracking (requires psutil package)
 
 Example timing output:
 ```
@@ -221,20 +168,7 @@ The script includes intelligent memory management features specifically designed
 - **Batch processing**: `--batch-size` controls how many windows are processed simultaneously
 - **Memory monitoring**: Real-time memory usage tracking and garbage collection between batches
 
-**Recommended settings for large datasets:**
-```bash
-# For datasets with >100,000 windows (typical whole-genome analysis)
-python code/detect_footprints.py -i large_dataset.counts.tsv.gz -o footprints.tsv \
-    --low-memory --batch-size 500 --num-cores 4 --timing
 
-# For M1 Macs with 16GB RAM
-python code/detect_footprints.py -i large_dataset.counts.tsv.gz -o footprints.tsv \
-    --max-memory-gb 12 --batch-size 1000 --num-cores 6
-
-# For systems with limited memory
-python code/detect_footprints.py -i large_dataset.counts.tsv.gz -o footprints.tsv \
-    --low-memory --batch-size 100 --num-cores 2
-```
 
 **Output format:**
 The script outputs a compact TSV file with the following columns:
@@ -252,6 +186,8 @@ Note: The `window_start` and `window_end` columns have been removed to reduce fi
 
 For interactive analysis and visualization, see `footprinting.ipynb`.
 
+
+
 ### Unit tests
 
 To run the test suite:
@@ -265,6 +201,8 @@ python3 run_tests.py
 ```
 
 See `tests/README.md` for more information on running and adding tests.
+
+
 
 
 ## Exploratory predictive modeling of footprints -> PRO-Cap signal
