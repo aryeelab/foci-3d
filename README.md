@@ -107,7 +107,7 @@ For interactive analysis and visualization, see `footprinting.ipynb`.
 
 ## Visualizing footprints
 
-After preprocessing reads as above, the smooothed counts and detected footprints can be visualized. 
+After preprocessing reads as above, the smooothed counts (footprints) can be visualized. 
 
 ```python
 from footprinting import get_count_matrix, plot_count_matrix
