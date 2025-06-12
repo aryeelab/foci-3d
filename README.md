@@ -37,6 +37,7 @@ conda activate footprint-tools
 SAMPLE="test_data/mesc_microc_test"
 #SAMPLE="/aryeelab/users/corri/data/Hansen_RCMC/MicroC_3hrDMSO"
 #SAMPLE="data/MicroC_3hrDMSO"
+SAMPLE="data/mesc_microC_3hrDMSO_chr8"
 
 min_mapq=20
 chrom_sizes=test_data/mm10.chrom.sizes
@@ -64,6 +65,7 @@ The `pairs_to_fragment_counts.py` script provides an automated pipeline that con
 # Output is a TSV of chrom \t pos \t fragment_length \t count
 # This file is bgzip compressed and tabix indexed
 
+conda activate footprint-tools
 python code/pairs_to_fragment_counts.py ${SAMPLE}.pairs.gz -o ${SAMPLE}.counts.tsv.gz
 
 ```

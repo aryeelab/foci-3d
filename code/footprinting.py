@@ -785,7 +785,7 @@ def get_count_matrix(counts_gz: str,
                      window_end: int,
                      fragment_len_min = 25,
                      fragment_len_max = 150,
-                     scale_factor_dict = None,
+                     scale = "yes",
                      sigma = 0,
                      log = False) -> pd.DataFrame:
     """
@@ -804,16 +804,19 @@ def get_count_matrix(counts_gz: str,
         1-based inclusive window start.
     window_end : int
         1-based inclusive window end.
-    scale_factor_dict : dict
-        Dictionary mapping fragment length to scale factor.
-        This is used to scale the counts in the output matrix.
     fragment_len_min : int
         Minimum fragment length to include in the output matrix.
     fragment_len_max : int
         Maximum fragment length to include in the output matrix.
+    scale : str, optional
+        Scaling method to apply to counts (default: "yes").
+        Options:
+        - "no": Don't apply any scaling to counts
+        - "by_fragment_length": Apply raw scaling factors from file header
+        - "yes": Apply normalized scaling factors from file header (default)
     sigma : int, optional
         Standard deviation for Gaussian kernel smoothing. If 0, no smoothing is applied.
-    log_norm : bool, optional
+    log : bool, optional
         If True, divide values by the mode and apply log2 to the counts. Default is False.
         If False, raw counts are returned.
 
@@ -827,6 +830,19 @@ def get_count_matrix(counts_gz: str,
     pd.Series
         Series of total raw counts for each fragment length in the range [fragment_len_min, fragment_len_max]
     """
+    # Parameter validation and conversion
+    valid_scale_options = ["no", "by_fragment_length", "yes"]
+    if scale not in valid_scale_options:
+        raise ValueError(f"scale parameter must be one of {valid_scale_options}, got: {scale}")
+
+    # Convert scale parameter to scale_factor_dict
+    if scale == "no":
+        scale_factor_dict = None
+    elif scale == "by_fragment_length":
+        scale_factor_dict = get_scale_factors(counts_gz, by_fragment_length=True)
+    elif scale == "yes":
+        scale_factor_dict = get_scale_factors(counts_gz, by_fragment_length=False)
+
     # open tabix file and fetch lines
     tb = pysam.TabixFile(counts_gz)
     records = tb.fetch(chrom, window_start - 1, window_end)
@@ -1268,7 +1284,6 @@ def get_valid_windows(counts_gz, chromosomes=None, window_overlap_bp=0, window_s
 
 def get_footprint_and_procap(fragment_counts_gz,
                              procap_bw,
-                             avg_count_per_fragment_length,
                              fragment_len_min, fragment_len_max,
                              chrom=None, window_start=None, window_end=None,
                              chromosomes=None, window_size=1024, window_overlap_bp=0, maxgap=1000, max_windows=None,
@@ -1333,7 +1348,7 @@ def get_footprint_and_procap(fragment_counts_gz,
         footprint, raw_total_counts = get_count_matrix(counts_gz=fragment_counts_gz,
                                         chrom=chrom, window_start=window_start, window_end=window_end,
                                         fragment_len_min=fragment_len_min, fragment_len_max=fragment_len_max,
-                                        scale_factor_dict=avg_count_per_fragment_length,
+                                        scale="yes",
                                         sigma=footprint_sigma)
 
         procap = get_bw_signal(procap_bw, chrom, window_start, window_end)
@@ -1362,7 +1377,7 @@ def get_footprint_and_procap(fragment_counts_gz,
                 window_end=window_end,
                 fragment_len_min=fragment_len_min,
                 fragment_len_max=fragment_len_max,
-                scale_factor_dict=avg_count_per_fragment_length,
+                scale="yes",
                 sigma=footprint_sigma
             )
 
@@ -1385,7 +1400,7 @@ def detect_footprints(counts_gz,
                   min_size=5,
                   fragment_len_min=25,
                   fragment_len_max=150,
-                  scale_factor_dict=None,
+                  scale="yes",
                   num_cores=4,
                   quiet=False):
     """
@@ -1412,8 +1427,12 @@ def detect_footprints(counts_gz,
         Minimum fragment length to include (default: 25)
     fragment_len_max : int, optional
         Maximum fragment length to include (default: 150)
-    scale_factor_dict : dict, optional
-        Dictionary of scaling factors for normalization (required)
+    scale : str, optional
+        Scaling method to apply to counts (default: "yes").
+        Options:
+        - "no": Don't apply any scaling to counts
+        - "by_fragment_length": Apply raw scaling factors from file header
+        - "yes": Apply normalized scaling factors from file header (default)
     num_cores : int, optional
         Number of CPU cores to use for parallel processing (default: 4)
     quiet : bool, optional
@@ -1457,7 +1476,7 @@ def detect_footprints(counts_gz,
                 window_end=window_end+pad,
                 fragment_len_min=fragment_len_min,
                 fragment_len_max=fragment_len_max,
-                scale_factor_dict=scale_factor_dict,
+                scale="yes",
                 sigma=sigma
             )
 

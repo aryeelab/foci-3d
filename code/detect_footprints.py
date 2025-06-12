@@ -280,7 +280,7 @@ def calculate_normalization_factors(counts_gz, chromosomes, gap_thresh=5000, out
 
 
 def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, sigma, min_size,
-                             fragment_len_min, fragment_len_max, scale_factor_dict, num_cores,
+                             fragment_len_min, fragment_len_max, scale, num_cores,
                              batch_size=1000, max_memory_gb=8.0, timing_stats=None, memory_profiling=False):
     """
     Memory-aware wrapper for detect_footprints that processes windows in batches.
@@ -433,7 +433,7 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
                         min_size=min_size,
                         fragment_len_min=fragment_len_min,
                         fragment_len_max=fragment_len_max,
-                        scale_factor_dict=scale_factor_dict,
+                        scale="yes",
                         num_cores=num_cores
                     )
 
@@ -491,7 +491,7 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
     return final_results
 
 
-def generate_qc_plots(footprints, scale_factor_dict, output_dir, timing_stats=None):
+def generate_qc_plots(footprints, counts_gz, output_dir, timing_stats=None):
     """
     Generate QC plots for footprint detection results.
 
@@ -499,8 +499,8 @@ def generate_qc_plots(footprints, scale_factor_dict, output_dir, timing_stats=No
     ----------
     footprints : pd.DataFrame
         DataFrame with detected footprints containing 'max_signal' and optionally 'p_value' columns
-    scale_factor_dict : dict
-        Dictionary mapping fragment length to average count per position
+    counts_gz : str
+        Path to the counts file (used to read scale factors from header)
     output_dir : str
         Directory to save QC plots
     timing_stats : TimingStats, optional
@@ -1033,7 +1033,7 @@ Examples:
             min_size=args.min_size,
             fragment_len_min=args.fragment_len_min,
             fragment_len_max=args.fragment_len_max,
-            scale_factor_dict=scale_factor_dict,
+            scale="yes",
             num_cores=args.num_cores,
             batch_size=batch_size,
             max_memory_gb=max_memory_gb,
@@ -1133,7 +1133,7 @@ Examples:
     # Generate QC plots if requested
     if args.qcplots:
         output_dir = os.path.dirname(args.output) or '.'
-        generate_qc_plots(footprints, scale_factor_dict, output_dir, timing_stats)
+        generate_qc_plots(footprints, args.input, output_dir, timing_stats)
 
     # Format output for compact file size
     formatted_footprints = format_output_dataframe(footprints)
@@ -1145,8 +1145,11 @@ Examples:
 
     # Write scale factors as the first line, then the DataFrame
     with open(args.output, 'w') as f:
+        # Get scale factors from the input file to write to output
+        from footprinting import get_scale_factors
+        scale_factors_for_output = get_scale_factors(args.input, by_fragment_length=True)
         # Write scale factors header as the first line
-        f.write(f"# scale_factors: {scale_factor_dict}\n")
+        f.write(f"# scale_factors: {scale_factors_for_output}\n")
         # Write the DataFrame
         formatted_footprints.to_csv(f, sep='\t', index=False)
 
