@@ -10,7 +10,8 @@ Pipeline Steps:
 1. Convert pairs to fragments: Run pairs_to_fragments_tsv.py
 2. Sort fragments: Sort by chromosome, midpoint, and length
 3. Count fragments: Aggregate into bins counting occurrences
-4. Create tabix index: Convert to tabix-indexed format
+3b. Compute scale factors: Calculate normalization factors and embed as header
+4. Create tabix index: Convert to tabix-indexed format with scale factors
 5. Cleanup: Remove intermediate temporary files
 
 Features:
@@ -33,6 +34,7 @@ import gzip
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 import signal
+from collections import defaultdict
 
 def format_time_hms(seconds: float) -> str:
     """Format time in hours:minutes:seconds format with whole seconds."""
@@ -84,7 +86,10 @@ class FragmentCountsPipeline:
         self.step_times = {}
         self.step_stats = {}
         self.start_time = time.time()
-        
+
+        # Scale factors (computed in step 3b)
+        self.scale_factors = {}
+
         # Setup signal handler for cleanup
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -136,13 +141,94 @@ class FragmentCountsPipeline:
     def _count_lines(self, filepath: Path) -> int:
         """Count lines in a file efficiently."""
         try:
-            result = subprocess.run(['wc', '-l', str(filepath)], 
+            result = subprocess.run(['wc', '-l', str(filepath)],
                                   capture_output=True, text=True, check=True)
             return int(result.stdout.split()[0])
         except:
             # Fallback to Python counting
             with open(filepath, 'r') as f:
                 return sum(1 for _ in f)
+
+    def _extract_chromosomes_from_counts(self, counts_file: Path) -> list:
+        """Extract unique chromosome names from the counts file."""
+        chromosomes = set()
+        with open(counts_file, 'r') as f:
+            for line in f:
+                if line.startswith('#'):
+                    continue  # Skip header lines
+                parts = line.strip().split('\t')
+                if len(parts) >= 1:
+                    chromosomes.add(parts[0])
+        return sorted(list(chromosomes))
+
+    def _compute_scale_factors(self, counts_file: Path) -> Dict[int, float]:
+        """Compute normalization scale factors using average_counts_by_fraglen."""
+        # Import the function from footprinting.py
+        try:
+            from footprinting import average_counts_by_fraglen
+        except ImportError:
+            print("Warning: Could not import average_counts_by_fraglen from footprinting.py", file=sys.stderr)
+            print("Scale factors will not be computed.", file=sys.stderr)
+            return {}
+
+        # First, we need to create a temporary bgzip file for tabix access
+        temp_bgzip_file = self.temp_dir / "temp_counts.tsv.gz"
+
+        # Create bgzip file
+        cmd_bgzip = ['bgzip', '-c', str(counts_file)]
+        with open(temp_bgzip_file, 'wb') as outfile:
+            process = subprocess.Popen(cmd_bgzip, stdout=outfile, stderr=subprocess.PIPE)
+            _, stderr = process.communicate()
+            if process.returncode != 0:
+                print(f"Warning: bgzip failed during scale factor computation: {stderr.decode()}", file=sys.stderr)
+                return {}
+
+        # Create tabix index
+        cmd_tabix = ['tabix', '-s', '1', '-b', '2', '-e', '2', str(temp_bgzip_file)]
+        try:
+            subprocess.run(cmd_tabix, check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Warning: tabix indexing failed during scale factor computation: {e}", file=sys.stderr)
+            return {}
+
+        # Extract chromosomes from the counts file
+        chromosomes = self._extract_chromosomes_from_counts(counts_file)
+        if not chromosomes:
+            print("Warning: No chromosomes found in counts file", file=sys.stderr)
+            return {}
+
+        print(f"Computing normalization scale factors for {len(chromosomes)} chromosomes...", file=sys.stderr)
+
+        # Calculate average counts for each chromosome and combine
+        all_avg_by_len = defaultdict(list)
+
+        for chrom in chromosomes:
+            print(f"  Processing chromosome {chrom}...", file=sys.stderr)
+            try:
+                avg_by_len = average_counts_by_fraglen(str(temp_bgzip_file), chrom, gap_thresh=5000)
+
+                # Combine results (taking average across chromosomes)
+                for frag_len, avg_count in avg_by_len.items():
+                    all_avg_by_len[frag_len].append(avg_count)
+            except Exception as e:
+                print(f"  Warning: Error processing chromosome {chrom}: {e}", file=sys.stderr)
+                continue
+
+        # Calculate final averages
+        final_avg_by_len = {}
+        for frag_len, counts in all_avg_by_len.items():
+            final_avg_by_len[frag_len] = sum(counts) / len(counts)
+
+        print(f"  Calculated normalization factors for {len(final_avg_by_len)} fragment lengths", file=sys.stderr)
+
+        # Clean up temporary files
+        try:
+            temp_bgzip_file.unlink()
+            (temp_bgzip_file.parent / f"{temp_bgzip_file.name}.tbi").unlink()
+        except:
+            pass  # Ignore cleanup errors
+
+        return final_avg_by_len
     
     def step1_convert_pairs_to_fragments(self) -> Dict[str, Any]:
         """Step 1: Convert pairs to fragments using pairs_to_fragments_tsv.py"""
@@ -264,14 +350,57 @@ class FragmentCountsPipeline:
         
         return stats
 
+    def step3b_compute_scale_factors(self) -> Dict[str, Any]:
+        """\nStep 3b: Compute normalization scale factors"""
+        print("Step 3b: Computing normalization scale factors...", file=sys.stderr)
+        step_start = time.time()
+
+        # Compute scale factors using the counts file
+        scale_factors = self._compute_scale_factors(self.counts_file)
+
+        # Store scale factors for use in step 4
+        self.scale_factors = scale_factors
+
+        # Collect statistics
+        step_time = time.time() - step_start
+
+        stats = {
+            'time': step_time,
+            'scale_factors_computed': len(scale_factors),
+            'has_scale_factors': len(scale_factors) > 0
+        }
+
+        if scale_factors:
+            print(f"   Scale factors computed for {len(scale_factors)} fragment lengths", file=sys.stderr)
+        else:
+            print(f"   Warning: No scale factors computed", file=sys.stderr)
+        print(f"   Step 3b completed in {format_time_hms(step_time)}", file=sys.stderr)
+        print("", file=sys.stderr)  # Add blank line for separation
+
+        return stats
+
     def step4_create_tabix_index(self) -> Dict[str, Any]:
         """\nStep 4: Create tabix-indexed format"""
         print("Step 4: Creating tabix index...", file=sys.stderr)
         step_start = time.time()
 
-        # Step 4a: bgzip compression
+        # Step 4a: bgzip compression with scale factors header
         bgzip_start = time.time()
-        cmd_bgzip = ['bgzip', '-c', str(self.counts_file)]
+
+        # Create a temporary file with scale factors header + data
+        temp_with_header = self.temp_dir / "counts_with_header.tsv"
+
+        with open(temp_with_header, 'w') as outfile:
+            # Write scale factors header if available
+            if hasattr(self, 'scale_factors') and self.scale_factors:
+                outfile.write(f"# scale_factors: {self.scale_factors}\n")
+
+            # Write the original counts data
+            with open(self.counts_file, 'r') as infile:
+                outfile.write(infile.read())
+
+        # Now bgzip the file with header
+        cmd_bgzip = ['bgzip', '-c', str(temp_with_header)]
 
         with open(self.output_file, 'wb') as outfile:
             process = subprocess.Popen(cmd_bgzip, stdout=outfile, stderr=subprocess.PIPE)
@@ -321,7 +450,8 @@ class FragmentCountsPipeline:
 
         if not self.keep_intermediates:
             # List files to be removed
-            for filepath in [self.fragments_file, self.sorted_fragments_file, self.counts_file]:
+            temp_with_header = self.temp_dir / "counts_with_header.tsv"
+            for filepath in [self.fragments_file, self.sorted_fragments_file, self.counts_file, temp_with_header]:
                 if filepath.exists():
                     size_mb = self._get_file_size_mb(filepath)
                     files_to_remove.append((filepath, size_mb))
@@ -390,6 +520,7 @@ class FragmentCountsPipeline:
             self.step_stats['step1'] = self.step1_convert_pairs_to_fragments()
             self.step_stats['step2'] = self.step2_sort_fragments()
             self.step_stats['step3'] = self.step3_count_fragments()
+            self.step_stats['step3b'] = self.step3b_compute_scale_factors()
             self.step_stats['step4'] = self.step4_create_tabix_index()
             self.step_stats['step5'] = self.step5_cleanup()
 
@@ -435,6 +566,7 @@ class FragmentCountsPipeline:
             'step1': 'Convert pairs to fragments',
             'step2': 'Sort fragments',
             'step3': 'Count fragments',
+            'step3b': 'Compute scale factors',
             'step4': 'Create tabix index',
             'step5': 'Cleanup'
         }
@@ -470,7 +602,8 @@ Pipeline Steps:
   1. Convert pairs to fragments using pairs_to_fragments_tsv.py
   2. Sort fragments by chromosome, midpoint, and length
   3. Count fragments per (chromosome, midpoint, length) combination
-  4. Create bgzip-compressed and tabix-indexed output
+  3b. Compute normalization scale factors and embed as header comments
+  4. Create bgzip-compressed and tabix-indexed output with scale factors
   5. Clean up intermediate temporary files
 
 Examples:
@@ -489,6 +622,7 @@ Examples:
 Output:
   - Main output: Tabix-indexed fragment counts file (.counts.tsv.gz)
   - Index file: Tabix index (.counts.tsv.gz.tbi)
+  - Scale factors: Embedded as parseable header comments in the output file
   - Ready for use with footprint detection tools
 
 Performance:

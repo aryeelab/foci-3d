@@ -1690,7 +1690,27 @@ def get_scale_factors(footprints_tsv_path):
         raise FileNotFoundError(f"Input file does not exist: {footprints_tsv_path}")
 
     try:
-        with open(footprints_tsv_path, 'r') as f:
+        # Check if file is gzip-compressed
+        import gzip
+
+        # Try to determine if file is gzip-compressed
+        is_gzip = False
+        if footprints_tsv_path.endswith('.gz'):
+            try:
+                with open(footprints_tsv_path, 'rb') as f:
+                    # Check gzip magic number (first 2 bytes should be 0x1f, 0x8b)
+                    magic = f.read(2)
+                    is_gzip = (magic == b'\x1f\x8b')
+            except:
+                is_gzip = False
+
+        # Open file appropriately
+        if is_gzip:
+            file_opener = lambda: gzip.open(footprints_tsv_path, 'rt')
+        else:
+            file_opener = lambda: open(footprints_tsv_path, 'r')
+
+        with file_opener() as f:
             # Read first few lines to find scale factors header
             for line_num, line in enumerate(f):
                 line = line.strip()
