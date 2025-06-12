@@ -105,7 +105,7 @@ The script outputs footprints in a TSV file with the following columns:
 
 For interactive analysis and visualization, see `footprinting.ipynb`.
 
-### Visualizing footprints
+## Visualizing footprints
 
 After preprocessing reads as above, the smooothed counts and detected footprints can be visualized. 
 
