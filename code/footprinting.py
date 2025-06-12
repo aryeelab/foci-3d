@@ -1645,7 +1645,7 @@ def read_footprints_tsv(footprints_tsv_path):
     return pd.read_csv(footprints_tsv_path, sep='\t', comment='#')
 
 
-def get_scale_factors(footprints_tsv_path):
+def get_scale_factors(footprints_tsv_path, by_fragment_length=False):
     """
     Read scale factors from a footprints TSV file.
 
@@ -1656,6 +1656,12 @@ def get_scale_factors(footprints_tsv_path):
     ----------
     footprints_tsv_path : str
         Path to a footprints TSV file that contains scale factors
+    by_fragment_length : bool, default False
+        Controls how scale factors are processed after reading from file.
+        If True: Return scale factors exactly as stored in the file.
+        If False: Apply normalization logic to simplify scale factors into two groups:
+                 - For fragment lengths < most common length: use median value
+                 - For fragment lengths >= most common length: use common length value
 
     Returns
     -------
@@ -1672,15 +1678,23 @@ def get_scale_factors(footprints_tsv_path):
 
     Examples
     --------
-    >>> scale_factors = get_scale_factors("footprints.tsv")
+    >>> # Get raw scale factors as stored in file
+    >>> scale_factors = get_scale_factors("footprints.tsv", by_fragment_length=True)
     >>> print(scale_factors)
     {50: 0.123, 75: 0.456, 100: 0.789}
+
+    >>> # Get normalized scale factors (default behavior)
+    >>> scale_factors = get_scale_factors("footprints.tsv")
+    >>> print(scale_factors)  # Simplified to two groups based on most common length
+    {50: 0.456, 75: 0.456, 100: 0.789}
 
     Notes
     -----
     - Expects format: # scale_factors: {frag_len1: factor1, frag_len2: factor2, ...}
     - Looks for scale factors in the first few lines of the file (header position)
     - Returns empty dict if no scale factors are found (for backward compatibility)
+    - When by_fragment_length=False, requires the file to be tabix-indexed for
+      most_common_fragment_length() calculation
     """
     import os
     import ast
@@ -1739,6 +1753,34 @@ def get_scale_factors(footprints_tsv_path):
                                 converted_factors[int(key)] = float(value)
                             except (ValueError, TypeError) as e:
                                 raise ValueError(f"Invalid scale factor entry {key}: {value} - {e}")
+
+                        # Apply normalization logic if by_fragment_length=False
+                        if not by_fragment_length and converted_factors:
+                            try:
+                                import numpy as np
+
+                                # Get the most common fragment length
+                                common_len = most_common_fragment_length(footprints_tsv_path)
+
+                                if common_len is not None and common_len in converted_factors:
+                                    # Calculate median for fragment lengths below common length
+                                    below_common = [v for k, v in converted_factors.items() if k < common_len]
+
+                                    if below_common:  # Only apply normalization if there are values below common length
+                                        median = np.median(below_common)
+
+                                        # Apply normalization logic
+                                        for k in converted_factors:
+                                            if k < common_len:
+                                                converted_factors[k] = median
+                                            elif k > common_len:  # Note: > not >=
+                                                converted_factors[k] = converted_factors[common_len]
+                                        # k == common_len keeps its original value
+
+                            except Exception as e:
+                                # If normalization fails, fall back to original values
+                                # This ensures backward compatibility
+                                pass
 
                         return converted_factors
 
