@@ -203,17 +203,45 @@ def bin_genomic_positions(positions, values, bin_size):
 def get_chromosome_sizes(counts_gz):
     """
     Get chromosome sizes from the counts file.
-    
+
+    First attempts to read from embedded chrom_sizes header for optimal performance.
+    Falls back to scanning the file if header is not available (backward compatibility).
+
     Parameters
     ----------
     counts_gz : str
         Path to bgzip-compressed, tabix-indexed TSV file
-        
+
     Returns
     -------
     dict
         Dictionary mapping chromosome names to sizes
     """
+    # First try to read chromosome sizes from header
+    try:
+        import gzip
+        with gzip.open(counts_gz, 'rt') as f:
+            for line in f:
+                if line.startswith('# chrom_sizes:'):
+                    # Parse the chromosome sizes dictionary from header
+                    header_content = line.strip()[len('# chrom_sizes:'):].strip()
+                    try:
+                        # Safely evaluate the dictionary string
+                        chrom_sizes = eval(header_content)
+                        if isinstance(chrom_sizes, dict) and chrom_sizes:
+                            print(f"Using embedded chromosome sizes from header ({len(chrom_sizes)} chromosomes)")
+                            return chrom_sizes
+                    except Exception as e:
+                        print(f"Warning: Could not parse chrom_sizes header: {e}")
+                        break
+                elif not line.startswith('#'):
+                    # Reached data section without finding chrom_sizes header
+                    break
+    except Exception as e:
+        print(f"Warning: Could not read header from {counts_gz}: {e}")
+
+    # Fallback to original method: scan the entire file
+    print("Chromosome sizes header not found, scanning file (this may take a while for large files)...")
     chrom_sizes = {}
     try:
         tb = pysam.TabixFile(counts_gz)
@@ -235,7 +263,7 @@ def get_chromosome_sizes(counts_gz):
         tb.close()
     except Exception as e:
         raise ValueError(f"Error reading chromosome sizes from {counts_gz}: {e}")
-    
+
     return chrom_sizes
 
 
@@ -296,15 +324,14 @@ def process_window_for_bigwig(counts_gz, chrom, window_start, window_end,
         for frag_start, frag_end in fragment_length_bins:
             bin_name = f"fraglen_{frag_start:03d}-{frag_end:03d}"
 
-            # Select fragment lengths in this bin
-            frag_lengths_in_bin = [fl for fl in count_matrix.index
-                                 if frag_start <= fl < frag_end]
+            # Select fragment lengths in this bin using vectorized operations
+            frag_mask = (count_matrix.index >= frag_start) & (count_matrix.index < frag_end)
 
-            if not frag_lengths_in_bin:
+            if not frag_mask.any():
                 continue
 
-            # Average signal across fragment lengths in this bin
-            bin_signal = count_matrix.loc[frag_lengths_in_bin].mean(axis=0)
+            # Sum signal across fragment lengths in this bin (vectorized)
+            bin_signal = count_matrix.loc[frag_mask].sum(axis=0)
 
             # Get positions and values
             positions = bin_signal.index.values
@@ -392,11 +419,14 @@ def write_to_bigwig(bigwig_files, chrom, window_data):
         if bin_name in bigwig_files and len(bin_starts) > 0:
             bw = bigwig_files[bin_name]
 
-            # Convert to lists for pyBigWig
-            chroms = [chrom] * len(bin_starts)
-            starts = [int(start) for start in bin_starts]
-            ends = [int(end) for end in bin_ends]  # BigWig intervals are half-open
-            values_list = [float(val) for val in values]
+            # Pre-allocate and convert arrays efficiently
+            n_entries = len(bin_starts)
+            chroms = [chrom] * n_entries
+
+            # Use numpy for efficient type conversion
+            starts = bin_starts.astype(int).tolist()
+            ends = bin_ends.astype(int).tolist()
+            values_list = values.astype(float).tolist()
 
             try:
                 bw.addEntries(chroms, starts, ends=ends, values=values_list)

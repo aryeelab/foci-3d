@@ -90,6 +90,9 @@ class FragmentCountsPipeline:
         # Scale factors (computed in step 3b)
         self.scale_factors = {}
 
+        # Chromosome sizes (tracked during processing)
+        self.chromosome_sizes = {}
+
         # Setup signal handler for cleanup
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -160,6 +163,37 @@ class FragmentCountsPipeline:
                 if len(parts) >= 1:
                     chromosomes.add(parts[0])
         return sorted(list(chromosomes))
+
+    def _track_chromosome_sizes(self, sorted_fragments_file: Path) -> Dict[str, int]:
+        """Track maximum positions for each chromosome during processing."""
+        chromosome_sizes = {}
+
+        with open(sorted_fragments_file, 'r') as f:
+            for line in f:
+                parts = line.strip().split('\t')
+                if len(parts) >= 3:
+                    chrom = parts[0]
+                    try:
+                        # Parse midpoint position (column 2)
+                        midpoint = float(parts[1])
+                        # Parse fragment length (column 3)
+                        fragment_length = int(parts[2])
+
+                        # Calculate approximate end position
+                        # midpoint + half fragment length gives us the end position
+                        end_position = int(midpoint + fragment_length / 2)
+
+                        # Track maximum position for this chromosome
+                        if chrom not in chromosome_sizes:
+                            chromosome_sizes[chrom] = end_position
+                        else:
+                            chromosome_sizes[chrom] = max(chromosome_sizes[chrom], end_position)
+
+                    except (ValueError, IndexError):
+                        # Skip malformed lines
+                        continue
+
+        return chromosome_sizes
 
     def _compute_scale_factors(self, counts_file: Path) -> Dict[int, float]:
         """Compute normalization scale factors using average_counts_by_fraglen."""
@@ -307,6 +341,11 @@ class FragmentCountsPipeline:
         print("Step 3: Counting fragments per (chromosome, midpoint, length)...", file=sys.stderr)
         step_start = time.time()
 
+        # Track chromosome sizes before counting
+        print("   Tracking chromosome sizes...", file=sys.stderr)
+        self.chromosome_sizes = self._track_chromosome_sizes(self.sorted_fragments_file)
+        print(f"   Found {len(self.chromosome_sizes)} chromosomes", file=sys.stderr)
+
         # Create header
         with open(self.counts_file, 'w') as outfile:
             outfile.write("#chrom\tmidpoint\tlength\tcount\n")
@@ -340,14 +379,16 @@ class FragmentCountsPipeline:
             'input_size_mb': input_size_mb,
             'output_size_mb': output_size_mb,
             'unique_fragments': counts_lines,
+            'chromosomes_found': len(self.chromosome_sizes),
             'throughput_mb_per_sec': input_size_mb / step_time if step_time > 0 else 0
         }
 
         print(f"   Unique fragment combinations: {counts_lines:,}", file=sys.stderr)
+        print(f"   Chromosomes tracked: {len(self.chromosome_sizes)}", file=sys.stderr)
         print(f"   Throughput: {stats['throughput_mb_per_sec']:.1f} MB/second", file=sys.stderr)
         print(f"   Step 3 completed in {format_time_hms(step_time)}", file=sys.stderr)
         print("", file=sys.stderr)  # Add blank line for separation
-        
+
         return stats
 
     def step3b_compute_scale_factors(self) -> Dict[str, Any]:
@@ -394,6 +435,10 @@ class FragmentCountsPipeline:
             # Write scale factors header if available
             if hasattr(self, 'scale_factors') and self.scale_factors:
                 outfile.write(f"# scale_factors: {self.scale_factors}\n")
+
+            # Write chromosome sizes header if available
+            if hasattr(self, 'chromosome_sizes') and self.chromosome_sizes:
+                outfile.write(f"# chrom_sizes: {self.chromosome_sizes}\n")
 
             # Write the original counts data
             with open(self.counts_file, 'r') as infile:
