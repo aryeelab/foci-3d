@@ -10,8 +10,10 @@ import argparse
 import os
 import sys
 import time
+import multiprocessing
 import numpy as np
 from tqdm import tqdm
+from joblib import Parallel, delayed
 
 # Handle potential import issues gracefully
 try:
@@ -137,29 +139,18 @@ def create_fragment_length_bins(fragment_len_min, fragment_len_max, bin_size):
 
 def bin_genomic_positions(positions, values, bin_size):
     """
-    Bin genomic positions and calculate mean values within each bin.
+    Optimized version: Bin genomic positions and calculate mean values within each bin.
 
-    Parameters
-    ----------
-    positions : array-like
-        Genomic positions
-    values : array-like
-        Values at each position
-    bin_size : int
-        Size of position bins
-
-    Returns
-    -------
-    tuple
-        (bin_starts, bin_ends, binned_values) where bin_starts and bin_ends
-        define the full interval for each bin, and binned_values are the mean
-        values within each bin
+    Key optimizations:
+    - Use numpy.bincount for faster aggregation
+    - Vectorized operations throughout
+    - Reduced memory allocations
     """
     if len(positions) == 0:
         return np.array([]), np.array([]), np.array([])
 
-    positions = np.array(positions)
-    values = np.array(values)
+    positions = np.asarray(positions)
+    values = np.asarray(values)
 
     # Calculate bin edges
     min_pos = positions.min()
@@ -171,33 +162,36 @@ def bin_genomic_positions(positions, values, bin_size):
 
     bin_edges = np.arange(bin_start, bin_end + bin_size, bin_size)
 
-    # Assign positions to bins and aggregate values
+    # Assign positions to bins
     bin_indices = np.digitize(positions, bin_edges) - 1
 
-    # Create output arrays for sum and count
-    n_bins = len(bin_edges) - 1
-    binned_sums = np.zeros(n_bins)
-    binned_counts = np.zeros(n_bins, dtype=int)
+    # Filter out positions that fall outside the valid bin range
+    valid_mask = (bin_indices >= 0) & (bin_indices < len(bin_edges) - 1)
+    if not valid_mask.any():
+        return np.array([]), np.array([]), np.array([])
 
-    # Aggregate values by bin (sum and count)
-    for i in range(len(positions)):
-        bin_idx = bin_indices[i]
-        if 0 <= bin_idx < n_bins:
-            binned_sums[bin_idx] += values[i]
-            binned_counts[bin_idx] += 1
+    valid_bin_indices = bin_indices[valid_mask]
+    valid_values = values[valid_mask]
+
+    # Use numpy.bincount for efficient aggregation
+    n_bins = len(bin_edges) - 1
+    binned_sums = np.bincount(valid_bin_indices, weights=valid_values, minlength=n_bins)
+    binned_counts = np.bincount(valid_bin_indices, minlength=n_bins)
 
     # Calculate mean values (avoid division by zero)
-    binned_values = np.zeros(n_bins)
-    non_zero_count_mask = binned_counts > 0
-    binned_values[non_zero_count_mask] = binned_sums[non_zero_count_mask] / binned_counts[non_zero_count_mask]
-
-    # Get bin start and end positions
-    bin_starts = bin_edges[:-1]
-    bin_ends = bin_edges[1:]
-
-    # Filter out empty bins (bins with zero count)
     non_zero_mask = binned_counts > 0
-    return bin_starts[non_zero_mask], bin_ends[non_zero_mask], binned_values[non_zero_mask]
+    if not non_zero_mask.any():
+        return np.array([]), np.array([]), np.array([])
+
+    binned_values = np.zeros(n_bins)
+    binned_values[non_zero_mask] = binned_sums[non_zero_mask] / binned_counts[non_zero_mask]
+
+    # Get bin start and end positions for non-empty bins only
+    bin_starts = bin_edges[:-1][non_zero_mask]
+    bin_ends = bin_edges[1:][non_zero_mask]
+    final_values = binned_values[non_zero_mask]
+
+    return bin_starts, bin_ends, final_values
 
 
 def get_chromosome_sizes(counts_gz):
@@ -267,42 +261,21 @@ def get_chromosome_sizes(counts_gz):
     return chrom_sizes
 
 
-def process_window_for_bigwig(counts_gz, chrom, window_start, window_end,
-                             fragment_length_bins, position_bin_size,
-                             fragment_len_min, fragment_len_max, sigma, scale):
+def process_window_for_bigwig_optimized(counts_gz, chrom, window_start, window_end,
+                                       fragment_length_bins, position_bin_size,
+                                       fragment_len_min, fragment_len_max, sigma, scale):
     """
-    Process a single genomic window and extract binned signals for each fragment length bin.
+    Optimized version: Process a single genomic window and extract binned signals for each fragment length bin.
 
-    Parameters
-    ----------
-    counts_gz : str
-        Path to counts file
-    chrom : str
-        Chromosome name
-    window_start : int
-        Window start position
-    window_end : int
-        Window end position
-    fragment_length_bins : list of tuple
-        List of (start, end) fragment length bins
-    position_bin_size : int
-        Size of position bins
-    fragment_len_min : int
-        Minimum fragment length
-    fragment_len_max : int
-        Maximum fragment length
-    sigma : float
-        Smoothing parameter
-    scale : str
-        Scaling method
-
-    Returns
-    -------
-    dict
-        Dictionary mapping fragment length bin names to (bin_starts, bin_ends, values) tuples
+    Key optimizations:
+    - Vectorized fragment binning (process all bins simultaneously)
+    - Reduced memory allocations
+    - Optimized array operations
     """
+    import time
     try:
         # Get count matrix for this window
+        matrix_start_time = time.time()
         count_matrix, _ = get_count_matrix(
             counts_gz=counts_gz,
             chrom=chrom,
@@ -313,56 +286,133 @@ def process_window_for_bigwig(counts_gz, chrom, window_start, window_end,
             scale=scale,
             sigma=sigma
         )
+        matrix_time = time.time() - matrix_start_time
 
         # Skip empty windows
         if count_matrix.empty or count_matrix.shape[0] == 0 or count_matrix.shape[1] == 0:
             return {}
 
+        binning_start_time = time.time()
+
+        # Vectorized fragment binning - process all bins simultaneously
         results = {}
 
-        # Process each fragment length bin
+        # Get fragment lengths and positions as numpy arrays for efficiency
+        fragment_lengths = count_matrix.index.values
+        positions = count_matrix.columns.values
+        matrix_values = count_matrix.values
+
+        # Process all fragment length bins in a vectorized manner
         for frag_start, frag_end in fragment_length_bins:
             bin_name = f"fraglen_{frag_start:03d}-{frag_end:03d}"
 
-            # Select fragment lengths in this bin using vectorized operations
-            frag_mask = (count_matrix.index >= frag_start) & (count_matrix.index < frag_end)
+            # Create mask for fragment lengths in this bin
+            frag_mask = (fragment_lengths >= frag_start) & (fragment_lengths < frag_end)
 
             if not frag_mask.any():
                 continue
 
             # Sum signal across fragment lengths in this bin (vectorized)
-            bin_signal = count_matrix.loc[frag_mask].sum(axis=0)
+            # Use numpy operations directly for better performance
+            bin_signal = matrix_values[frag_mask].sum(axis=0)
 
-            # Get positions and values
-            positions = bin_signal.index.values
-            values = bin_signal.values
-
-            # Filter out zero values
-            non_zero_mask = values > 0
+            # Filter out zero values efficiently
+            non_zero_mask = bin_signal > 0
             if not non_zero_mask.any():
                 continue
 
-            positions = positions[non_zero_mask]
-            values = values[non_zero_mask]
+            filtered_positions = positions[non_zero_mask]
+            filtered_values = bin_signal[non_zero_mask]
 
             # Bin genomic positions if requested
             if position_bin_size > 1:
-                bin_starts, bin_ends, values = bin_genomic_positions(positions, values, position_bin_size)
-                # Store bin boundaries along with values
+                bin_starts, bin_ends, binned_values = bin_genomic_positions(
+                    filtered_positions, filtered_values, position_bin_size
+                )
                 if len(bin_starts) > 0:
-                    results[bin_name] = (bin_starts, bin_ends, values)
+                    # Sort by position to ensure proper BigWig ordering
+                    sort_idx = np.argsort(bin_starts)
+                    results[bin_name] = (
+                        bin_starts[sort_idx],
+                        bin_ends[sort_idx],
+                        binned_values[sort_idx]
+                    )
             else:
                 # For single-base resolution, treat each position as a 1bp bin
-                if len(positions) > 0:
-                    bin_starts = positions
-                    bin_ends = positions + 1
-                    results[bin_name] = (bin_starts, bin_ends, values)
+                if len(filtered_positions) > 0:
+                    # Sort by position to ensure proper BigWig ordering
+                    sort_idx = np.argsort(filtered_positions)
+                    sorted_positions = filtered_positions[sort_idx]
+                    sorted_values = filtered_values[sort_idx]
+
+                    results[bin_name] = (
+                        sorted_positions,
+                        sorted_positions + 1,
+                        sorted_values
+                    )
+
+        binning_time = time.time() - binning_start_time
+
+        # Store timing info for debugging
+        if hasattr(process_window_for_bigwig_optimized, 'timing_stats'):
+            process_window_for_bigwig_optimized.timing_stats['matrix_time'] += matrix_time
+            process_window_for_bigwig_optimized.timing_stats['binning_time'] += binning_time
+            process_window_for_bigwig_optimized.timing_stats['window_count'] += 1
+        else:
+            process_window_for_bigwig_optimized.timing_stats = {
+                'matrix_time': matrix_time,
+                'binning_time': binning_time,
+                'window_count': 1
+            }
 
         return results
 
     except Exception as e:
         print(f"Warning: Error processing window {chrom}:{window_start}-{window_end}: {e}")
         return {}
+
+
+def process_window_for_bigwig_parallel(window_info):
+    """
+    Wrapper function for parallel processing of windows.
+
+    Parameters
+    ----------
+    window_info : tuple
+        Tuple containing (chrom, window_start, window_end, counts_gz, fragment_length_bins,
+        position_bin_size, fragment_len_min, fragment_len_max, sigma, scale)
+
+    Returns
+    -------
+    tuple
+        (chrom, window_start, window_end, window_data) where window_data is the result
+        from process_window_for_bigwig_optimized
+    """
+    (chrom, window_start, window_end, counts_gz, fragment_length_bins,
+     position_bin_size, fragment_len_min, fragment_len_max, sigma, scale) = window_info
+
+    window_data = process_window_for_bigwig_optimized(
+        counts_gz, chrom, window_start, window_end,
+        fragment_length_bins, position_bin_size,
+        fragment_len_min, fragment_len_max, sigma, scale
+    )
+
+    return (chrom, window_start, window_end, window_data)
+
+
+def process_window_for_bigwig(counts_gz, chrom, window_start, window_end,
+                             fragment_length_bins, position_bin_size,
+                             fragment_len_min, fragment_len_max, sigma, scale):
+    """
+    Process a single genomic window and extract binned signals for each fragment length bin.
+
+    This is a wrapper that calls the optimized version.
+    """
+    return process_window_for_bigwig_optimized(
+        counts_gz, chrom, window_start, window_end,
+        fragment_length_bins, position_bin_size,
+        fragment_len_min, fragment_len_max, sigma, scale
+    )
 
 
 def create_bigwig_files(output_prefix, fragment_length_bins, chrom_sizes):
@@ -402,36 +452,172 @@ def create_bigwig_files(output_prefix, fragment_length_bins, chrom_sizes):
     return bigwig_files
 
 
+def write_to_bigwig_optimized(bigwig_files, chrom, window_data):
+    """
+    Optimized BigWig writing with proper coordinate handling.
+
+    Key optimizations:
+    - Ensure coordinates are properly sorted
+    - Validate coordinate ranges
+    - Efficient type conversions
+    - Better error handling
+    """
+    for bin_name, (bin_starts, bin_ends, values) in window_data.items():
+        if bin_name not in bigwig_files or len(bin_starts) == 0:
+            continue
+
+        bw = bigwig_files[bin_name]
+
+        # Ensure coordinates are sorted and valid
+        try:
+            # Convert to numpy arrays for efficient operations
+            starts_array = np.asarray(bin_starts, dtype=np.int32)
+            ends_array = np.asarray(bin_ends, dtype=np.int32)
+            values_array = np.asarray(values, dtype=np.float64)
+
+            # Validate coordinates
+            if len(starts_array) != len(ends_array) or len(starts_array) != len(values_array):
+                print(f"Warning: Mismatched array lengths for {bin_name}")
+                continue
+
+            # Ensure starts < ends
+            valid_intervals = starts_array < ends_array
+            if not valid_intervals.all():
+                print(f"Warning: Invalid intervals found for {bin_name}, filtering...")
+                starts_array = starts_array[valid_intervals]
+                ends_array = ends_array[valid_intervals]
+                values_array = values_array[valid_intervals]
+
+            if len(starts_array) == 0:
+                continue
+
+            # Sort by start position to ensure proper ordering
+            sort_idx = np.argsort(starts_array)
+            starts_sorted = starts_array[sort_idx]
+            ends_sorted = ends_array[sort_idx]
+            values_sorted = values_array[sort_idx]
+
+            # Check for overlapping intervals (BigWig doesn't handle these well)
+            if len(starts_sorted) > 1:
+                overlaps = starts_sorted[1:] < ends_sorted[:-1]
+                if overlaps.any():
+                    # Merge overlapping intervals by taking the maximum value
+                    starts_merged, ends_merged, values_merged = merge_overlapping_intervals(
+                        starts_sorted, ends_sorted, values_sorted
+                    )
+                else:
+                    starts_merged, ends_merged, values_merged = starts_sorted, ends_sorted, values_sorted
+            else:
+                starts_merged, ends_merged, values_merged = starts_sorted, ends_sorted, values_sorted
+
+            # Convert to lists for BigWig API
+            n_entries = len(starts_merged)
+            chroms = [chrom] * n_entries
+            starts_list = starts_merged.tolist()
+            ends_list = ends_merged.tolist()
+            values_list = values_merged.tolist()
+
+            # Write to BigWig
+            bw.addEntries(chroms, starts_list, ends=ends_list, values=values_list)
+
+        except Exception as e:
+            print(f"Warning: Error writing to BigWig for {bin_name}: {e}")
+
+
+def merge_overlapping_intervals(starts, ends, values):
+    """
+    Merge overlapping intervals by taking the maximum value in overlapping regions.
+    """
+    if len(starts) <= 1:
+        return starts, ends, values
+
+    merged_starts = [starts[0]]
+    merged_ends = [ends[0]]
+    merged_values = [values[0]]
+
+    for i in range(1, len(starts)):
+        if starts[i] < merged_ends[-1]:  # Overlapping
+            # Extend the previous interval and take max value
+            merged_ends[-1] = max(merged_ends[-1], ends[i])
+            merged_values[-1] = max(merged_values[-1], values[i])
+        else:
+            # Non-overlapping, add new interval
+            merged_starts.append(starts[i])
+            merged_ends.append(ends[i])
+            merged_values.append(values[i])
+
+    return np.array(merged_starts), np.array(merged_ends), np.array(merged_values)
+
+
+def write_collected_data_to_bigwig(bigwig_file, chrom_data):
+    """
+    Write collected data from multiple windows to a BigWig file with proper coordinate sorting.
+
+    Parameters
+    ----------
+    bigwig_file : pyBigWig file handle
+        BigWig file to write to
+    chrom_data : dict
+        Dictionary mapping chromosome names to data dictionaries with 'starts', 'ends', 'values' keys
+    """
+    for chrom, data in chrom_data.items():
+        starts = np.array(data['starts'], dtype=np.int32)
+        ends = np.array(data['ends'], dtype=np.int32)
+        values = np.array(data['values'], dtype=np.float64)
+
+        if len(starts) == 0:
+            continue
+
+        # Sort by start position to ensure proper BigWig ordering
+        sort_idx = np.argsort(starts)
+        starts_sorted = starts[sort_idx]
+        ends_sorted = ends[sort_idx]
+        values_sorted = values[sort_idx]
+
+        # Validate coordinates
+        valid_intervals = starts_sorted < ends_sorted
+        if not valid_intervals.all():
+            print(f"Warning: Invalid intervals found for {chrom}, filtering...")
+            starts_sorted = starts_sorted[valid_intervals]
+            ends_sorted = ends_sorted[valid_intervals]
+            values_sorted = values_sorted[valid_intervals]
+
+        if len(starts_sorted) == 0:
+            continue
+
+        # Check for overlapping intervals and merge if necessary
+        if len(starts_sorted) > 1:
+            overlaps = starts_sorted[1:] < ends_sorted[:-1]
+            if overlaps.any():
+                starts_merged, ends_merged, values_merged = merge_overlapping_intervals(
+                    starts_sorted, ends_sorted, values_sorted
+                )
+            else:
+                starts_merged, ends_merged, values_merged = starts_sorted, ends_sorted, values_sorted
+        else:
+            starts_merged, ends_merged, values_merged = starts_sorted, ends_sorted, values_sorted
+
+        # Convert to lists for BigWig API
+        n_entries = len(starts_merged)
+        chroms = [chrom] * n_entries
+        starts_list = starts_merged.tolist()
+        ends_list = ends_merged.tolist()
+        values_list = values_merged.tolist()
+
+        try:
+            # Write to BigWig
+            bigwig_file.addEntries(chroms, starts_list, ends=ends_list, values=values_list)
+        except Exception as e:
+            print(f"Warning: Error writing to BigWig for {chrom}: {e}")
+
+
 def write_to_bigwig(bigwig_files, chrom, window_data):
     """
     Write window data to BigWig files.
 
-    Parameters
-    ----------
-    bigwig_files : dict
-        Dictionary mapping bin names to BigWig file handles
-    chrom : str
-        Chromosome name
-    window_data : dict
-        Dictionary mapping bin names to (bin_starts, bin_ends, values) tuples
+    This is a wrapper that calls the optimized version.
     """
-    for bin_name, (bin_starts, bin_ends, values) in window_data.items():
-        if bin_name in bigwig_files and len(bin_starts) > 0:
-            bw = bigwig_files[bin_name]
-
-            # Pre-allocate and convert arrays efficiently
-            n_entries = len(bin_starts)
-            chroms = [chrom] * n_entries
-
-            # Use numpy for efficient type conversion
-            starts = bin_starts.astype(int).tolist()
-            ends = bin_ends.astype(int).tolist()
-            values_list = values.astype(float).tolist()
-
-            try:
-                bw.addEntries(chroms, starts, ends=ends, values=values_list)
-            except Exception as e:
-                print(f"Warning: Error writing to BigWig for {bin_name}: {e}")
+    return write_to_bigwig_optimized(bigwig_files, chrom, window_data)
 
 
 def close_bigwig_files(bigwig_files):
@@ -450,41 +636,23 @@ def close_bigwig_files(bigwig_files):
             print(f"Warning: Error closing BigWig file: {e}")
 
 
-def generate_bigwig_files(counts_gz, output_prefix, chromosomes, window_size,
-                         fragment_len_min, fragment_len_max, fraglen_bin_size,
-                         position_bin_size, sigma, scale):
+def generate_bigwig_files_parallel(counts_gz, output_prefix, chromosomes, window_size,
+                                  fragment_len_min, fragment_len_max, fraglen_bin_size,
+                                  position_bin_size, sigma, scale, num_cores=4):
     """
-    Generate BigWig files for fragment length bins.
+    Generate BigWig files for fragment length bins using parallel processing.
 
-    Parameters
-    ----------
-    counts_gz : str
-        Path to counts file
-    output_prefix : str
-        Output file prefix
-    chromosomes : list of tuple
-        List of (chrom, start, end) tuples
-    window_size : int
-        Processing window size
-    fragment_len_min : int
-        Minimum fragment length
-    fragment_len_max : int
-        Maximum fragment length
-    fraglen_bin_size : int
-        Fragment length bin size
-    position_bin_size : int
-        Position bin size
-    sigma : float
-        Smoothing parameter
-    scale : str
-        Scaling method
+    This is the optimized version that uses multiple CPU cores for window processing.
     """
-    print("Generating fragment length-stratified BigWig files...")
+    import time
+    print("Generating fragment length-stratified BigWig files (parallel processing)...")
 
     # Create fragment length bins
+    start_time = time.time()
     fragment_length_bins = create_fragment_length_bins(
         fragment_len_min, fragment_len_max, fraglen_bin_size
     )
+    print(f"Fragment length bins creation: {time.time() - start_time:.2f}s")
 
     print(f"Fragment length bins: {len(fragment_length_bins)} bins")
     for frag_start, frag_end in fragment_length_bins:
@@ -492,26 +660,188 @@ def generate_bigwig_files(counts_gz, output_prefix, chromosomes, window_size,
 
     # Get chromosome sizes
     print("Getting chromosome sizes...")
+    start_time = time.time()
     chrom_sizes = get_chromosome_sizes(counts_gz)
+    print(f"Chromosome sizes: {time.time() - start_time:.2f}s")
 
     # Get valid windows for processing
     print("Getting valid windows...")
+    start_time = time.time()
     windows = get_valid_windows(
         counts_gz=counts_gz,
         chromosomes=chromosomes,
         window_size=window_size
     )
+    print(f"Valid windows: {time.time() - start_time:.2f}s")
 
     print(f"Processing {len(windows)} windows...")
 
     # Create BigWig files
     print("Creating BigWig files...")
+    start_time = time.time()
     bigwig_files = create_bigwig_files(output_prefix, fragment_length_bins, chrom_sizes)
+    print(f"BigWig file creation: {time.time() - start_time:.2f}s")
+
+    # Determine number of cores to use
+    num_cores = min(num_cores, multiprocessing.cpu_count(), len(windows))
+    print(f"Using {num_cores} CPU cores for parallel processing")
+
+    # Prepare window information for parallel processing
+    window_info_list = []
+    for chrom, window_start, window_end in windows:
+        window_info = (chrom, window_start, window_end, counts_gz, fragment_length_bins,
+                      position_bin_size, fragment_len_min, fragment_len_max, sigma, scale)
+        window_info_list.append(window_info)
+
+    # Timing variables for profiling
+    total_window_processing_time = 0
+    total_bigwig_writing_time = 0
+    window_count = 0
+
+    try:
+        # Process windows in parallel
+        print("Processing windows in parallel...")
+        parallel_start_time = time.time()
+
+        # Use joblib for parallel processing with progress bar
+        results = Parallel(n_jobs=num_cores)(
+            delayed(process_window_for_bigwig_parallel)(window_info)
+            for window_info in tqdm(window_info_list, desc="Processing windows")
+        )
+
+        parallel_processing_time = time.time() - parallel_start_time
+        total_window_processing_time = parallel_processing_time
+
+        # Collect and batch write results to BigWig files (BigWig writing is not thread-safe)
+        print("Collecting and writing results to BigWig files...")
+        bigwig_start_time = time.time()
+
+        # Collect all data by fragment length bin and chromosome
+        collected_data = {}
+        for chrom, window_start, window_end, window_data in tqdm(results, desc="Collecting results"):
+            if window_data:
+                for bin_name, (bin_starts, bin_ends, values) in window_data.items():
+                    if bin_name not in collected_data:
+                        collected_data[bin_name] = {}
+                    if chrom not in collected_data[bin_name]:
+                        collected_data[bin_name][chrom] = {'starts': [], 'ends': [], 'values': []}
+
+                    collected_data[bin_name][chrom]['starts'].extend(bin_starts)
+                    collected_data[bin_name][chrom]['ends'].extend(bin_ends)
+                    collected_data[bin_name][chrom]['values'].extend(values)
+            window_count += 1
+
+        # Write collected data to BigWig files with proper sorting
+        for bin_name in tqdm(collected_data.keys(), desc="Writing to BigWig"):
+            if bin_name in bigwig_files:
+                write_collected_data_to_bigwig(bigwig_files[bin_name], collected_data[bin_name])
+
+        total_bigwig_writing_time = time.time() - bigwig_start_time
+
+    finally:
+        # Always close BigWig files
+        print("Closing BigWig files...")
+        close_bigwig_files(bigwig_files)
+
+    # Print timing statistics
+    print(f"\nPerformance Analysis (Parallel Processing):")
+    print(f"  Total window processing time: {total_window_processing_time:.2f}s ({total_window_processing_time/window_count:.3f}s per window)")
+    print(f"  Total BigWig writing time: {total_bigwig_writing_time:.2f}s ({total_bigwig_writing_time/window_count:.3f}s per window)")
+    print(f"  Average processing rate: {window_count/total_window_processing_time:.1f} windows/sec")
+    print(f"  Parallel efficiency: {num_cores} cores used")
+
+    # Print output files
+    print("\nGenerated BigWig files:")
+    for frag_start, frag_end in fragment_length_bins:
+        bin_name = f"fraglen_{frag_start:03d}-{frag_end:03d}"
+        output_file = f"{output_prefix}.{bin_name}.bw"
+        if os.path.exists(output_file):
+            file_size = os.path.getsize(output_file) / (1024 * 1024)  # MB
+            print(f"  {output_file} ({file_size:.1f} MB)")
+
+    print("BigWig generation completed successfully!")
+
+
+def generate_bigwig_files(counts_gz, output_prefix, chromosomes, window_size,
+                         fragment_len_min, fragment_len_max, fraglen_bin_size,
+                         position_bin_size, sigma, scale, num_cores=1):
+    """
+    Generate BigWig files for fragment length bins.
+
+    This function automatically chooses between serial and parallel processing
+    based on the num_cores parameter.
+    """
+    if num_cores > 1:
+        return generate_bigwig_files_parallel(
+            counts_gz, output_prefix, chromosomes, window_size,
+            fragment_len_min, fragment_len_max, fraglen_bin_size,
+            position_bin_size, sigma, scale, num_cores
+        )
+    else:
+        return generate_bigwig_files_serial(
+            counts_gz, output_prefix, chromosomes, window_size,
+            fragment_len_min, fragment_len_max, fraglen_bin_size,
+            position_bin_size, sigma, scale
+        )
+
+
+def generate_bigwig_files_serial(counts_gz, output_prefix, chromosomes, window_size,
+                                fragment_len_min, fragment_len_max, fraglen_bin_size,
+                                position_bin_size, sigma, scale):
+    """
+    Generate BigWig files for fragment length bins using serial processing.
+
+    This is the original single-threaded version for comparison or when parallel
+    processing is not desired.
+    """
+    import time
+    print("Generating fragment length-stratified BigWig files (serial processing)...")
+
+    # Create fragment length bins
+    start_time = time.time()
+    fragment_length_bins = create_fragment_length_bins(
+        fragment_len_min, fragment_len_max, fraglen_bin_size
+    )
+    print(f"Fragment length bins creation: {time.time() - start_time:.2f}s")
+
+    print(f"Fragment length bins: {len(fragment_length_bins)} bins")
+    for frag_start, frag_end in fragment_length_bins:
+        print(f"  {frag_start}-{frag_end}bp")
+
+    # Get chromosome sizes
+    print("Getting chromosome sizes...")
+    start_time = time.time()
+    chrom_sizes = get_chromosome_sizes(counts_gz)
+    print(f"Chromosome sizes: {time.time() - start_time:.2f}s")
+
+    # Get valid windows for processing
+    print("Getting valid windows...")
+    start_time = time.time()
+    windows = get_valid_windows(
+        counts_gz=counts_gz,
+        chromosomes=chromosomes,
+        window_size=window_size
+    )
+    print(f"Valid windows: {time.time() - start_time:.2f}s")
+
+    print(f"Processing {len(windows)} windows...")
+
+    # Create BigWig files
+    print("Creating BigWig files...")
+    start_time = time.time()
+    bigwig_files = create_bigwig_files(output_prefix, fragment_length_bins, chrom_sizes)
+    print(f"BigWig file creation: {time.time() - start_time:.2f}s")
+
+    # Timing variables for profiling
+    total_window_processing_time = 0
+    total_bigwig_writing_time = 0
+    window_count = 0
 
     try:
         # Process windows with progress bar
         for chrom, window_start, window_end in tqdm(windows, desc="Processing windows"):
             # Process this window
+            window_start_time = time.time()
             window_data = process_window_for_bigwig(
                 counts_gz=counts_gz,
                 chrom=chrom,
@@ -524,15 +854,37 @@ def generate_bigwig_files(counts_gz, output_prefix, chromosomes, window_size,
                 sigma=sigma,
                 scale=scale
             )
+            window_processing_time = time.time() - window_start_time
+            total_window_processing_time += window_processing_time
 
             # Write data to BigWig files
             if window_data:
+                bigwig_start_time = time.time()
                 write_to_bigwig(bigwig_files, chrom, window_data)
+                bigwig_writing_time = time.time() - bigwig_start_time
+                total_bigwig_writing_time += bigwig_writing_time
+
+            window_count += 1
 
     finally:
         # Always close BigWig files
         print("Closing BigWig files...")
         close_bigwig_files(bigwig_files)
+
+    # Print timing statistics
+    print(f"\nPerformance Analysis (Serial Processing):")
+    print(f"  Total window processing time: {total_window_processing_time:.2f}s ({total_window_processing_time/window_count:.3f}s per window)")
+    print(f"  Total BigWig writing time: {total_bigwig_writing_time:.2f}s ({total_bigwig_writing_time/window_count:.3f}s per window)")
+    print(f"  Average processing rate: {window_count/total_window_processing_time:.1f} windows/sec")
+
+    # Print detailed window processing breakdown if available
+    if hasattr(process_window_for_bigwig_optimized, 'timing_stats'):
+        stats = process_window_for_bigwig_optimized.timing_stats
+        print(f"  Detailed window processing breakdown:")
+        print(f"    Matrix retrieval time: {stats['matrix_time']:.2f}s ({stats['matrix_time']/stats['window_count']:.3f}s per window)")
+        print(f"    Fragment binning time: {stats['binning_time']:.2f}s ({stats['binning_time']/stats['window_count']:.3f}s per window)")
+        print(f"    Matrix retrieval: {100*stats['matrix_time']/total_window_processing_time:.1f}% of window processing time")
+        print(f"    Fragment binning: {100*stats['binning_time']/total_window_processing_time:.1f}% of window processing time")
 
     # Print output files
     print("\nGenerated BigWig files:")
@@ -600,6 +952,8 @@ Examples:
                         help='Standard deviation for Gaussian smoothing (default: 10.0, use 0 for no smoothing)')
     parser.add_argument('--scale', choices=['yes', 'no', 'by_fragment_length'], default='yes',
                         help='Scaling method to apply (default: yes)')
+    parser.add_argument('--num-cores', type=int, default=4,
+                        help='Number of CPU cores to use for parallel processing (default: 4, use 1 for serial processing)')
 
     args = parser.parse_args()
 
@@ -662,7 +1016,8 @@ Examples:
             fraglen_bin_size=args.fraglen_bin_size,
             position_bin_size=args.position_bin_size,
             sigma=args.sigma,
-            scale=args.scale
+            scale=args.scale,
+            num_cores=args.num_cores
         )
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

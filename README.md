@@ -38,7 +38,7 @@ SAMPLE="test_data/mesc_microc_test"
 #SAMPLE="/aryeelab/users/corri/data/Hansen_RCMC/MicroC_3hrDMSO"
 #SAMPLE="data/MicroC_3hrDMSO"
 #SAMPLE="data/mesc_microC_3hrDMSO_chr8"
-SAMPLE="data/MicroC_3hrDMSO_medium"
+SAMPLE="data/MicroC_3hrDMSO_small"
 
 min_mapq=20
 chrom_sizes=test_data/mm10.chrom.sizes
