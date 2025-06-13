@@ -162,6 +162,50 @@ python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o 
     --timing
 ```
 
+## Generating BigWig files for genome browser visualization
+
+The `footprint_bigwig.py` script creates fragment length-stratified BigWig files that can be loaded into genome browsers like IGV or UCSC Genome Browser to visualize footprint signals across different fragment length ranges.
+
+```bash
+# View all options
+python code/footprint_bigwig.py -h
+
+# Generate BigWig files for a specific chromosome
+python code/footprint_bigwig.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprint_bigwigs -r chr8
+
+# Generate BigWig files for a specific region
+python code/footprint_bigwig.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprint_bigwigs -r chr8:22000000-23000000
+
+# Custom fragment length bins (20bp bins instead of default 10bp)
+python code/footprint_bigwig.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprint_bigwigs -r chr8 \
+    --fraglen-bin-size 20
+
+# Custom position binning for reduced file size
+python code/footprint_bigwig.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprint_bigwigs -r chr8 \
+    --position-bin-size 5
+
+# No smoothing (sigma=0)
+python code/footprint_bigwig.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprint_bigwigs -r chr8 \
+    --sigma 0
+```
+
+**Output files**: The script generates one BigWig file per fragment length bin:
+- `PREFIX.fraglen_025-035.bw` - Short fragments (transcription factors)
+- `PREFIX.fraglen_035-045.bw` - Short fragments
+- `PREFIX.fraglen_045-055.bw` - Medium fragments
+- `PREFIX.fraglen_055-065.bw` - Medium fragments
+- `PREFIX.fraglen_065-075.bw` - Medium fragments
+- `PREFIX.fraglen_075-085.bw` - Medium fragments
+- `PREFIX.fraglen_085-095.bw` - Medium-long fragments
+- `PREFIX.fraglen_095-105.bw` - Medium-long fragments
+- `PREFIX.fraglen_105-115.bw` - Long fragments
+- `PREFIX.fraglen_115-125.bw` - Long fragments
+- `PREFIX.fraglen_125-135.bw` - Long fragments (nucleosomes)
+- `PREFIX.fraglen_135-145.bw` - Long fragments (nucleosomes)
+- `PREFIX.fraglen_145-150.bw` - Long fragments (nucleosomes)
+
+These BigWig files can be stacked in a genome browser to recreate the smoothed footprint heatmap visualization, allowing interactive exploration of fragment length-specific signals across the genome.
+
 ## Unit tests
 
 To run the test suite:
