@@ -177,7 +177,7 @@ python code/footprint_bigwig.py -i test_data/mesc_microc_test.counts.tsv.gz -o f
 python code/footprint_bigwig.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprint_bigwigs -r chr8:22000000-23000000
 
 # Custom fragment length bins (20bp bins instead of default 10bp)
-python code/footprint_bigwig.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprint_bigwigs -r chr8 \
+python code/footprint_bigwig.py -i test_data/mesc_microc_test.counts.tsv.gz -o bw/footprint_bigwigs -r chr8 \
     --fraglen-bin-size 20
 
 # Custom position binning for reduced file size
@@ -188,6 +188,9 @@ python code/footprint_bigwig.py -i test_data/mesc_microc_test.counts.tsv.gz -o f
 python code/footprint_bigwig.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprint_bigwigs -r chr8 \
     --sigma 0
 ```
+### TEMP
+time python code/footprint_bigwig.py -i data/MicroC_3hrDMSO.counts.tsv.gz -o data/bw/MicroC_3hrDMSO/MicroC_3hrDMSO_footprint --fraglen-bin-size 3
+
 
 **Output files**: The script generates one BigWig file per fragment length bin:
 - `PREFIX.fraglen_025-035.bw` - Short fragments (transcription factors)

@@ -19,12 +19,12 @@ To run a specific test:
 
 ```bash
 # Run a specific test file
-python3 test_pairs_to_fragments.py
+python3 test_pairs_to_fragment_counts.py
 ```
 
 ## Test Files
 
-- `test_pairs_to_fragments.py`: Tests the functionality of the `pairs_to_fragments_tsv.py` script, which converts pairs files to fragment counts. This test uses a hardcoded MD5 checksum value to validate the output, allowing it to run even if the reference file is not present in the repository.
+- `test_pairs_to_fragment_counts.py`: Tests the functionality of the `pairs_to_fragment_counts.py` script, which executes the complete pipeline from pairs files to tabix-indexed fragment counts with embedded normalization scale factors. This test validates the entire pipeline including conversion, sorting, counting, scale factor computation, and tabix indexing. Uses a hardcoded MD5 checksum to validate the output format and content.
 
 ## Adding New Tests
 
