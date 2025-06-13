@@ -37,7 +37,8 @@ conda activate footprint-tools
 SAMPLE="test_data/mesc_microc_test"
 #SAMPLE="/aryeelab/users/corri/data/Hansen_RCMC/MicroC_3hrDMSO"
 #SAMPLE="data/MicroC_3hrDMSO"
-SAMPLE="data/mesc_microC_3hrDMSO_chr8"
+#SAMPLE="data/mesc_microC_3hrDMSO_chr8"
+SAMPLE="data/MicroC_3hrDMSO_medium"
 
 min_mapq=20
 chrom_sizes=test_data/mm10.chrom.sizes
@@ -89,7 +90,7 @@ The `detect_footprints.py` script provides a command line interface for footprin
 ```bash
 
 # Basic usage: Process all chromosomes
-python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv
+python code/detect_footprints.py -i ${SAMPLE}.counts.tsv.gz -o ${SAMPLE}.footprints.tsv
 
 ```
 
@@ -107,7 +108,16 @@ The script outputs footprints in a TSV file with the following columns:
 
 For interactive analysis and visualization, see `footprinting.ipynb`.
 
-## Visualizing footprints
+## Generating BigWig files for genome browser footprint visualization
+
+The `footprint_bigwig.py` script creates fragment length-stratified BigWig files that can be loaded into genome browsers like IGV or UCSC Genome Browser to visualize footprint signals across different fragment length ranges.
+
+```bash
+python code/footprint_bigwig.py -i ${SAMPLE}.counts.tsv.gz -o ${SAMPLE}_footprint_bigwigs 
+```
+
+
+## Visualizing footprints in python
 
 After preprocessing reads as above, the smooothed counts (footprints) can be visualized. 
 
@@ -133,7 +143,7 @@ plot_count_matrix(count_mat, xtick_spacing=200, figsize=(10, 1.5))
 # See footprinting.ipynb for examples
 ```
 
-## Detecting footprints - Advanced usage examples
+## Advanced usage examples: Detecting footprints
 
 ```
 # View all options
@@ -162,9 +172,7 @@ python code/detect_footprints.py -i test_data/mesc_microc_test.counts.tsv.gz -o 
     --timing
 ```
 
-## Generating BigWig files for genome browser visualization
-
-The `footprint_bigwig.py` script creates fragment length-stratified BigWig files that can be loaded into genome browsers like IGV or UCSC Genome Browser to visualize footprint signals across different fragment length ranges.
+## Advanced usage examples:Generating BigWig files for genome browser visualization
 
 ```bash
 # View all options

@@ -783,8 +783,11 @@ Examples:
   # Process all chromosomes (no -r specified)
   %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv
 
-  # Use pre-calculated normalization factors
+  # Use pre-calculated normalization factors (overrides embedded factors)
   %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr1 --norm-factors norm_factors.pkl
+
+  # Save embedded normalization factors for reuse
+  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr1 --save-norm-factors norm_factors.pkl
 
   # Adjust detection parameters
   %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --threshold 15.0 --sigma 2.0 --min-size 10
@@ -827,9 +830,11 @@ Examples:
     # Normalization factors
     parser.add_argument('--norm-factors',
                         help='Path to pre-calculated normalization factors (pickle file). '
-                             'If not provided, factors will be calculated from the input data.')
+                             'If not provided, the script will first try to read embedded scale factors '
+                             'from the input file header, then fall back to calculating from data.')
     parser.add_argument('--save-norm-factors',
-                        help='Path to save calculated normalization factors (pickle file)')
+                        help='Path to save normalization factors (pickle file). '
+                             'Useful for saving embedded factors or newly calculated factors for reuse.')
 
     # Detection parameters
     parser.add_argument('--threshold', type=float, default=5.0,
@@ -994,11 +999,42 @@ Examples:
         if timing_stats:
             timing_stats.end_timer("Loading normalization factors")
     else:
-        # Calculate normalization factors
-        scale_factor_dict = calculate_normalization_factors(
-            args.input, chromosomes, gap_thresh=args.gap_thresh,
-            output_file=args.save_norm_factors, timing_stats=timing_stats
-        )
+        # First try to read embedded scale factors from the input file header
+        if timing_stats:
+            timing_stats.start_timer("Reading embedded scale factors")
+
+        try:
+            from footprinting import get_scale_factors
+            embedded_scale_factors = get_scale_factors(args.input, by_fragment_length=True)
+
+            if embedded_scale_factors:
+                print(f"Using embedded normalization factors from input file header ({len(embedded_scale_factors)} fragment lengths)")
+                scale_factor_dict = embedded_scale_factors
+
+                # Save embedded factors to file if requested
+                if args.save_norm_factors:
+                    print(f"  Saving embedded normalization factors to {args.save_norm_factors}")
+                    with open(args.save_norm_factors, 'wb') as f:
+                        pickle.dump(scale_factor_dict, f)
+
+                if timing_stats:
+                    timing_stats.end_timer("Reading embedded scale factors")
+            else:
+                if timing_stats:
+                    timing_stats.end_timer("Reading embedded scale factors")
+                raise ValueError("No embedded scale factors found")
+
+        except Exception as e:
+            if timing_stats:
+                timing_stats.end_timer("Reading embedded scale factors")
+            print(f"Embedded scale factors not found or could not be read: {e}")
+            print("Calculating normalization factors from data...")
+
+            # Fallback: Calculate normalization factors from scratch
+            scale_factor_dict = calculate_normalization_factors(
+                args.input, chromosomes, gap_thresh=args.gap_thresh,
+                output_file=args.save_norm_factors, timing_stats=timing_stats
+            )
 
     print(f"Using normalization factors for {len(scale_factor_dict)} fragment lengths")
 
