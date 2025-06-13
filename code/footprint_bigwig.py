@@ -552,27 +552,27 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Process whole chromosome
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprint_bigwigs -r chr8
+  # Process whole chromosome (creates test_data/mysample/ directory)
+  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o test_data/mysample -r chr8
 
-  # Process specific region
+  # Process specific region (creates footprint_bigwigs/ directory)
   %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprint_bigwigs -r chr8:22000000-23000000
 
-  # Custom fragment length bins
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprint_bigwigs -r chr8 --fraglen-bin-size 20
+  # Custom fragment length bins (creates output/ directory)
+  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o output -r chr8 --fraglen-bin-size 20
 
   # Custom position binning
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprint_bigwigs -r chr8 --position-bin-size 5
+  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o results -r chr8 --position-bin-size 5
 
   # No smoothing
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprint_bigwigs -r chr8 --sigma 0
+  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o no_smooth -r chr8 --sigma 0
         """)
 
     # Required arguments
     parser.add_argument('-i', '--input', required=True,
                         help='Path to bgzip-compressed, tabix-indexed TSV file (chrom, pos, fragment_length, count)')
     parser.add_argument('-o', '--output', required=True,
-                        help='Output prefix for BigWig files (will create PREFIX.fraglen_XXX-YYY.bw files)')
+                        help='Output directory for BigWig files (will create DIRNAME/DIRNAME.fraglen_XXX-YYY.bw files)')
 
     # Region specification
     parser.add_argument('-r', '--regions',
@@ -617,6 +617,24 @@ Examples:
         print(f"Error: Tabix index file {args.input}.tbi does not exist", file=sys.stderr)
         sys.exit(1)
 
+    # Handle output directory and prefix
+    output_dir = args.output
+
+    # Create output directory if it doesn't exist
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"Output directory: {output_dir}")
+    except Exception as e:
+        print(f"Error: Could not create output directory {output_dir}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Generate output prefix from directory name
+    dir_name = os.path.basename(os.path.abspath(output_dir))
+    if not dir_name:  # Handle case where output_dir is just "/"
+        dir_name = "output"
+    output_prefix = os.path.join(output_dir, dir_name)
+    print(f"Output prefix: {output_prefix}")
+
     # Parse regions
     try:
         if args.regions:
@@ -636,7 +654,7 @@ Examples:
     try:
         generate_bigwig_files(
             counts_gz=args.input,
-            output_prefix=args.output,
+            output_prefix=output_prefix,
             chromosomes=chromosomes,
             window_size=args.window_size,
             fragment_len_min=args.fragment_len_min,
