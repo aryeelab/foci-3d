@@ -444,37 +444,7 @@ def nbparams_by_fraglen(tabix_path, chrom, gap_thresh=5000, min_data_points=10, 
 
     return params
 
-def average_counts_by_fraglen(tabix_path, chrom, gap_thresh=5000, num_regions=500, region_size=10000):
-    """
-    Compute the average count per base for each fragment_length using a sampling-based approach,
-    ignoring any stretches > gap_thresh bases with zero data.
-
-    This optimized version samples approximately 5 MB total (500 regions × 10 KB each)
-    evenly distributed across the chromosome length instead of processing the entire chromosome.
-    This provides statistically equivalent results while processing only ~1-2% of the data.
-
-    Parameters
-    ----------
-    tabix_path : str
-        Path to a bgzip-compressed, tabix-indexed TSV of:
-        chrom \t pos \t fragment_length \t count
-    chrom : str
-        Chromosome name to process (e.g. 'chr1')
-    gap_thresh : int, default 5000
-        Maximum allowed gap between data points to consider a segment 'valid'
-    num_regions : int, default 500
-        Number of regions to sample across the chromosome
-    region_size : int, default 10000
-        Size of each sampled region in base pairs
-
-    Returns
-    -------
-    dict[int, float]
-        frag_len -> average_count_per_position
-    """
-import pysam
-from collections import defaultdict
-
+# Removed duplicate/broken function definition - using the complete optimized version below
 
 def max_pos(counts_gz: str, chrom: str) -> int:
     tbx = pysam.TabixFile(counts_gz)

@@ -239,7 +239,14 @@ class FragmentCountsPipeline:
         for chrom in chromosomes:
             print(f"  Processing chromosome {chrom}...", file=sys.stderr)
             try:
-                avg_by_len = average_counts_by_fraglen(str(temp_bgzip_file), chrom, gap_thresh=5000)
+                # Use by_fragment_length=True to avoid the expensive most_common_fragment_length call
+                # This uses the optimized sampling-based approach (500 regions × 5KB = ~2.5MB total)
+                avg_by_len = average_counts_by_fraglen(
+                    str(temp_bgzip_file),
+                    chrom,
+                    gap_thresh=5000,
+                    by_fragment_length=True
+                )
 
                 # Combine results (taking average across chromosomes)
                 for frag_len, avg_count in avg_by_len.items():

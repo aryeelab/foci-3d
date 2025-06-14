@@ -243,7 +243,14 @@ def calculate_normalization_factors(counts_gz, chromosomes, gap_thresh=5000, out
     for chrom in chrom_names:
         print(f"  Processing chromosome {chrom}...")
         try:
-            avg_by_len = average_counts_by_fraglen(counts_gz, chrom, gap_thresh=gap_thresh)
+            # Use by_fragment_length=True to avoid the expensive most_common_fragment_length call
+            # This uses the optimized sampling-based approach (500 regions × 5KB = ~2.5MB total)
+            avg_by_len = average_counts_by_fraglen(
+                counts_gz,
+                chrom,
+                gap_thresh=gap_thresh,
+                by_fragment_length=True
+            )
 
             # Combine results (taking average across chromosomes)
             for frag_len, avg_count in avg_by_len.items():
