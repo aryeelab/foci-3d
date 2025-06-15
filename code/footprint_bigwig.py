@@ -28,7 +28,7 @@ except ImportError as e:
 
 # Import functions from the footprinting module
 try:
-    from footprinting import get_count_matrix, get_valid_windows
+    from footprinting import get_count_matrix
 except ImportError as e:
     print(f"Error: Cannot import footprinting module: {e}", file=sys.stderr)
     print("Please ensure footprinting.py is in the same directory or in your Python path.", file=sys.stderr)
@@ -259,6 +259,57 @@ def get_chromosome_sizes(counts_gz):
         raise ValueError(f"Error reading chromosome sizes from {counts_gz}: {e}")
 
     return chrom_sizes
+
+
+def generate_systematic_windows(chromosomes, chrom_sizes, window_size):
+    """
+    Generate systematic fixed-size windows across specified chromosomes.
+
+    This function creates non-overlapping windows of fixed size across the genome,
+    which is more efficient than data-driven window discovery for BigWig generation.
+    BigWig files handle sparse data gracefully, so we don't need to identify
+    "valid" regions with sufficient coverage.
+
+    Parameters
+    ----------
+    chromosomes : list of tuple
+        List of (chrom, start, end) tuples specifying regions to process
+    chrom_sizes : dict
+        Dictionary mapping chromosome names to their sizes
+    window_size : int
+        Size of each window in base pairs
+
+    Returns
+    -------
+    list of tuple
+        List of (chrom, window_start, window_end) tuples for systematic windows
+    """
+    windows = []
+
+    for chrom, region_start, region_end in chromosomes:
+        # Handle None values for whole chromosome processing
+        if region_start is None:
+            region_start = 1  # 1-based genomic coordinates
+        if region_end is None:
+            region_end = chrom_sizes.get(chrom, 250_000_000)
+
+        # Ensure region_end doesn't exceed chromosome size
+        if region_end > chrom_sizes.get(chrom, 0):
+            region_end = chrom_sizes.get(chrom, 250_000_000)
+
+        # Generate non-overlapping windows across the region
+        current_pos = region_start
+        while current_pos < region_end:
+            window_start = current_pos
+            window_end = min(current_pos + window_size - 1, region_end)
+
+            # Only add windows that have at least some meaningful size
+            if window_end > window_start:
+                windows.append((chrom, window_start, window_end))
+
+            current_pos += window_size
+
+    return windows
 
 
 def process_window_for_bigwig_optimized(counts_gz, chrom, window_start, window_end,
@@ -664,15 +715,15 @@ def generate_bigwig_files_parallel(counts_gz, output_prefix, chromosomes, window
     chrom_sizes = get_chromosome_sizes(counts_gz)
     print(f"Chromosome sizes: {time.time() - start_time:.2f}s")
 
-    # Get valid windows for processing
-    print("Getting valid windows...")
+    # Generate systematic windows for processing
+    print("Generating systematic windows...")
     start_time = time.time()
-    windows = get_valid_windows(
-        counts_gz=counts_gz,
+    windows = generate_systematic_windows(
         chromosomes=chromosomes,
+        chrom_sizes=chrom_sizes,
         window_size=window_size
     )
-    print(f"Valid windows: {time.time() - start_time:.2f}s")
+    print(f"Systematic windows: {time.time() - start_time:.2f}s")
 
     print(f"Processing {len(windows)} windows...")
 
@@ -814,15 +865,15 @@ def generate_bigwig_files_serial(counts_gz, output_prefix, chromosomes, window_s
     chrom_sizes = get_chromosome_sizes(counts_gz)
     print(f"Chromosome sizes: {time.time() - start_time:.2f}s")
 
-    # Get valid windows for processing
-    print("Getting valid windows...")
+    # Generate systematic windows for processing
+    print("Generating systematic windows...")
     start_time = time.time()
-    windows = get_valid_windows(
-        counts_gz=counts_gz,
+    windows = generate_systematic_windows(
         chromosomes=chromosomes,
+        chrom_sizes=chrom_sizes,
         window_size=window_size
     )
-    print(f"Valid windows: {time.time() - start_time:.2f}s")
+    print(f"Systematic windows: {time.time() - start_time:.2f}s")
 
     print(f"Processing {len(windows)} windows...")
 
