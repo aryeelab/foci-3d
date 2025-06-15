@@ -763,13 +763,17 @@ def generate_bigwig_files_parallel(counts_gz, output_prefix, chromosomes, window
         parallel_processing_time = time.time() - parallel_start_time
         total_window_processing_time = parallel_processing_time
 
-        # Collect and batch write results to BigWig files (BigWig writing is not thread-safe)
-        print("Collecting and writing results to BigWig files...")
+        # Stream results to BigWig files in batches to keep memory usage reasonable
+        print("Streaming results to BigWig files...")
         bigwig_start_time = time.time()
 
-        # Collect all data by fragment length bin and chromosome
+        # Process results in batches to avoid accumulating all data in memory
+        # Batch size of 50 windows typically keeps memory usage under 100MB
+        batch_size = 50
         collected_data = {}
-        for chrom, window_start, window_end, window_data in tqdm(results, desc="Collecting results"):
+        batch_count = 0
+
+        for chrom, window_start, window_end, window_data in tqdm(results, desc="Streaming to BigWig"):
             if window_data:
                 for bin_name, (bin_starts, bin_ends, values) in window_data.items():
                     if bin_name not in collected_data:
@@ -780,12 +784,25 @@ def generate_bigwig_files_parallel(counts_gz, output_prefix, chromosomes, window
                     collected_data[bin_name][chrom]['starts'].extend(bin_starts)
                     collected_data[bin_name][chrom]['ends'].extend(bin_ends)
                     collected_data[bin_name][chrom]['values'].extend(values)
-            window_count += 1
 
-        # Write collected data to BigWig files with proper sorting
-        for bin_name in tqdm(collected_data.keys(), desc="Writing to BigWig"):
-            if bin_name in bigwig_files:
-                write_collected_data_to_bigwig(bigwig_files[bin_name], collected_data[bin_name])
+            window_count += 1
+            batch_count += 1
+
+            # Write batch to BigWig files when batch is full
+            if batch_count >= batch_size:
+                for bin_name in collected_data.keys():
+                    if bin_name in bigwig_files and collected_data[bin_name]:
+                        write_collected_data_to_bigwig(bigwig_files[bin_name], collected_data[bin_name])
+
+                # Clear collected data to free memory
+                collected_data = {}
+                batch_count = 0
+
+        # Write any remaining data in the final batch
+        if collected_data:
+            for bin_name in collected_data.keys():
+                if bin_name in bigwig_files and collected_data[bin_name]:
+                    write_collected_data_to_bigwig(bigwig_files[bin_name], collected_data[bin_name])
 
         total_bigwig_writing_time = time.time() - bigwig_start_time
 
