@@ -750,53 +750,66 @@ def generate_bigwig_files_parallel(counts_gz, output_prefix, chromosomes, window
     window_count = 0
 
     try:
-        # Process windows in parallel
-        print("Processing windows in parallel...")
+        # Process windows in parallel with true streaming to keep memory usage low
+        print("Processing windows in parallel with streaming...")
         parallel_start_time = time.time()
 
-        # Use joblib for parallel processing with progress bar
-        results = Parallel(n_jobs=num_cores)(
-            delayed(process_window_for_bigwig_parallel)(window_info)
-            for window_info in tqdm(window_info_list, desc="Processing windows")
-        )
+        # Process in chunks to avoid accumulating all results in memory
+        chunk_size = 50  # Process 50 windows at a time to keep memory ~100MB
+        total_chunks = (len(window_info_list) + chunk_size - 1) // chunk_size
 
-        parallel_processing_time = time.time() - parallel_start_time
-        total_window_processing_time = parallel_processing_time
-
-        # Stream results to BigWig files in batches to keep memory usage reasonable
-        print("Streaming results to BigWig files...")
-        bigwig_start_time = time.time()
-
-        # Process results in batches to avoid accumulating all data in memory
-        # Batch size of 50 windows typically keeps memory usage under 100MB
-        batch_size = 50
         collected_data = {}
         batch_count = 0
+        bigwig_start_time = time.time()
 
-        for chrom, window_start, window_end, window_data in tqdm(results, desc="Streaming to BigWig"):
-            if window_data:
-                for bin_name, (bin_starts, bin_ends, values) in window_data.items():
-                    if bin_name not in collected_data:
-                        collected_data[bin_name] = {}
-                    if chrom not in collected_data[bin_name]:
-                        collected_data[bin_name][chrom] = {'starts': [], 'ends': [], 'values': []}
+        for chunk_idx in range(total_chunks):
+            start_idx = chunk_idx * chunk_size
+            end_idx = min(start_idx + chunk_size, len(window_info_list))
+            chunk_window_info = window_info_list[start_idx:end_idx]
 
-                    collected_data[bin_name][chrom]['starts'].extend(bin_starts)
-                    collected_data[bin_name][chrom]['ends'].extend(bin_ends)
-                    collected_data[bin_name][chrom]['values'].extend(values)
+            # Process this chunk in parallel
+            chunk_results = Parallel(n_jobs=num_cores)(
+                delayed(process_window_for_bigwig_parallel)(window_info)
+                for window_info in chunk_window_info
+            )
 
-            window_count += 1
-            batch_count += 1
+            # Immediately process and write results from this chunk
+            for chrom, window_start, window_end, window_data in chunk_results:
+                if window_data:
+                    for bin_name, (bin_starts, bin_ends, values) in window_data.items():
+                        if bin_name not in collected_data:
+                            collected_data[bin_name] = {}
+                        if chrom not in collected_data[bin_name]:
+                            collected_data[bin_name][chrom] = {'starts': [], 'ends': [], 'values': []}
 
-            # Write batch to BigWig files when batch is full
-            if batch_count >= batch_size:
-                for bin_name in collected_data.keys():
-                    if bin_name in bigwig_files and collected_data[bin_name]:
-                        write_collected_data_to_bigwig(bigwig_files[bin_name], collected_data[bin_name])
+                        collected_data[bin_name][chrom]['starts'].extend(bin_starts)
+                        collected_data[bin_name][chrom]['ends'].extend(bin_ends)
+                        collected_data[bin_name][chrom]['values'].extend(values)
 
-                # Clear collected data to free memory
-                collected_data = {}
-                batch_count = 0
+                window_count += 1
+                batch_count += 1
+
+                # Write batch to BigWig files when batch is full
+                if batch_count >= chunk_size:
+                    for bin_name in collected_data.keys():
+                        if bin_name in bigwig_files and collected_data[bin_name]:
+                            write_collected_data_to_bigwig(bigwig_files[bin_name], collected_data[bin_name])
+
+                    # Clear collected data to free memory
+                    collected_data = {}
+                    batch_count = 0
+
+            # Clear chunk results to free memory immediately
+            del chunk_results
+
+            # Force garbage collection to ensure memory is freed
+            import gc
+            gc.collect()
+
+            # Progress update
+            progress = (chunk_idx + 1) / total_chunks * 100
+            processed_windows = min(end_idx, len(window_info_list))
+            print(f"  Processed {processed_windows}/{len(window_info_list)} windows ({progress:.1f}%)")
 
         # Write any remaining data in the final batch
         if collected_data:
@@ -804,6 +817,8 @@ def generate_bigwig_files_parallel(counts_gz, output_prefix, chromosomes, window
                 if bin_name in bigwig_files and collected_data[bin_name]:
                     write_collected_data_to_bigwig(bigwig_files[bin_name], collected_data[bin_name])
 
+        parallel_processing_time = time.time() - parallel_start_time
+        total_window_processing_time = parallel_processing_time
         total_bigwig_writing_time = time.time() - bigwig_start_time
 
     finally:
