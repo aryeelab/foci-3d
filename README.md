@@ -116,7 +116,6 @@ The `footprint_bigwig.py` script creates fragment length-stratified BigWig files
 python code/footprint_bigwig.py -i ${SAMPLE}.counts.tsv.gz -o ${SAMPLE}_footprint_bigwigs 
 ```
 
-
 ## Visualizing footprints in python
 
 After preprocessing reads as above, the smooothed counts (footprints) can be visualized. 
