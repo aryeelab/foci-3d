@@ -884,43 +884,53 @@ def generate_bigwig_files_parallel(counts_gz, output_prefix, chromosomes, window
                                       position_bin_size, fragment_len_min, fragment_len_max, sigma, scale)
                         chunk_window_info.append(window_info)
 
-                    # Process this genomic chunk in parallel
-                    chunk_results = Parallel(n_jobs=num_cores)(
-                        delayed(process_window_for_bigwig_parallel)(window_info)
-                        for window_info in chunk_window_info
-                    )
-
-                    # Collect all results from this genomic chunk in memory
+                    # Process genomic chunk in smaller batches for smoother progress updates
+                    batch_size = 20  # Process 20 windows at a time for smooth progress
                     chunk_collected_data = {}
-                    for chrom_result, window_start, window_end, window_data in chunk_results:
-                        if window_data:
-                            for bin_name, (bin_starts, bin_ends, values) in window_data.items():
-                                if bin_name not in chunk_collected_data:
-                                    chunk_collected_data[bin_name] = {}
-                                if chrom_result not in chunk_collected_data[bin_name]:
-                                    chunk_collected_data[bin_name][chrom_result] = {'starts': [], 'ends': [], 'values': []}
 
-                                chunk_collected_data[bin_name][chrom_result]['starts'].extend(bin_starts)
-                                chunk_collected_data[bin_name][chrom_result]['ends'].extend(bin_ends)
-                                chunk_collected_data[bin_name][chrom_result]['values'].extend(values)
+                    # Split chunk into smaller batches for progress updates
+                    for batch_start in range(0, len(chunk_window_info), batch_size):
+                        batch_end = min(batch_start + batch_size, len(chunk_window_info))
+                        batch_window_info = chunk_window_info[batch_start:batch_end]
 
-                        window_count += 1
+                        # Process this batch in parallel
+                        batch_results = Parallel(n_jobs=num_cores)(
+                            delayed(process_window_for_bigwig_parallel)(window_info)
+                            for window_info in batch_window_info
+                        )
+
+                        # Collect results from this batch
+                        for chrom_result, window_start, window_end, window_data in batch_results:
+                            if window_data:
+                                for bin_name, (bin_starts, bin_ends, values) in window_data.items():
+                                    if bin_name not in chunk_collected_data:
+                                        chunk_collected_data[bin_name] = {}
+                                    if chrom_result not in chunk_collected_data[bin_name]:
+                                        chunk_collected_data[bin_name][chrom_result] = {'starts': [], 'ends': [], 'values': []}
+
+                                    chunk_collected_data[bin_name][chrom_result]['starts'].extend(bin_starts)
+                                    chunk_collected_data[bin_name][chrom_result]['ends'].extend(bin_ends)
+                                    chunk_collected_data[bin_name][chrom_result]['values'].extend(values)
+
+                            window_count += 1
+
+                        # Update progress bar for this batch (smooth updates)
+                        pbar.update(len(batch_results))
+
+                        # Clear batch results to free memory
+                        del batch_results
+
+                        # Force garbage collection
+                        import gc
+                        gc.collect()
 
                     # Sort and write this genomic chunk's data to BigWig files (ensures correct order)
                     for bin_name in chunk_collected_data.keys():
                         if bin_name in bigwig_files and chunk_collected_data[bin_name]:
                             write_collected_data_to_bigwig_sorted(bigwig_files[bin_name], chunk_collected_data[bin_name])
 
-                    # Update progress bar for this genomic chunk
-                    pbar.update(len(chunk_results))
-
                     # Clear chunk data to free memory immediately
-                    del chunk_results
                     del chunk_collected_data
-
-                    # Force garbage collection to ensure memory is freed
-                    import gc
-                    gc.collect()
 
         parallel_processing_time = time.time() - parallel_start_time
         total_window_processing_time = parallel_processing_time
