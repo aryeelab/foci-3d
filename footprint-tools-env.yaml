@@ -16,6 +16,8 @@ dependencies:
   - htslib              # provides bgzip/tabix
   - psutil
   - tqdm
-  - pip                 
+  - joblib              # required for parallel processing in footprinting.py
+  - scipy               # required for gaussian_filter and other scipy functions
+  - pip
   - pip:
     - pyBigWig          # pulls the ARM-compatible wheel from PyPI for numpy <2.0a0 compatability
