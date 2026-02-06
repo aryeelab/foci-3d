@@ -992,12 +992,14 @@ def plot_count_matrix(
     # Prepare GridSpec: heatmap + tracks, with separate colorbar column
     n_tracks = len(tracks) if tracks else 0
     fig = plt.figure(figsize=figsize)
+    # Increase hspace when named_positions are present to avoid overlap with tracks
+    hspace_value = 0.6 if (named_positions and n_tracks > 0) else 0.3
     gs = gridspec.GridSpec(
         1 + n_tracks, 2,
         height_ratios=[3] + [1]*n_tracks,
         width_ratios=[1, 0.05],
         wspace=0.03,
-        hspace=0.3
+        hspace=hspace_value
     )
 
     # Draw heatmap in [0,0] and its colorbar in [0,1]
@@ -1074,7 +1076,7 @@ def plot_count_matrix(
                     arrowprops=dict(arrowstyle='-|>', color='red')
                 )
                 ax_heat.text(
-                    x0, -0.1, lbl,
+                    x0, -0.14, lbl,
                     transform=ax_heat.get_xaxis_transform(),
                     ha='center', va='top', color='red'
                 )
