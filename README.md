@@ -26,11 +26,10 @@ If you are starting from BAM input, one typical upstream workflow is:
 
 ```bash
 SAMPLE="tests/data/mesc_microc_test"
-min_mapq=20
 chrom_sizes=tests/data/mm10.chrom.sizes
 
 samtools view -h ${SAMPLE}.bam | \
-pairtools parse --min-mapq ${min_mapq} --walks-policy 5unique --drop-sam \
+pairtools parse --min-mapq 20 --walks-policy 5unique --drop-sam \
   --max-inter-align-gap 30 --add-columns pos5,pos3 \
   --chroms-path ${chrom_sizes} | \
 pairtools sort | \
