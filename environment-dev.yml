@@ -1,4 +1,4 @@
-name: foci-3d-dev
+name: foci-3d
 channels:
   - conda-forge
   - bioconda
