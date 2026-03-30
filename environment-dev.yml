@@ -1,0 +1,23 @@
+name: foci-3d-dev
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.10
+  - pip
+  - pairtools
+  - htslib
+  - samtools
+  - pandas
+  - numpy>=1.22,<2.0a0
+  - matplotlib
+  - seaborn
+  - scikit-image
+  - statsmodels
+  - pysam
+  - psutil
+  - tqdm
+  - joblib
+  - scipy
+  - pytest
+  - hatchling

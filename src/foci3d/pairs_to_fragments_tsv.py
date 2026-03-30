@@ -298,13 +298,15 @@ def process_ultra_optimized(input_file: str, output_file: str, column_indices: D
         print(f"  Data processed: {actual_file_size:.1f} MB", file=sys.stderr)
         print(f"  I/O throughput: {mb_per_second:.1f} MB/second", file=sys.stderr)
 
-def main():
-    if len(sys.argv) != 3:
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+
+    if len(argv) != 2:
         print("Usage: python pairs_to_fragments_tsv.py <input_file> <output_file>", file=sys.stderr)
         sys.exit(1)
 
-    input_file = sys.argv[1]
-    output_file = sys.argv[2]
+    input_file = argv[0]
+    output_file = argv[1]
 
     # Validate input file
     if not os.path.exists(input_file):

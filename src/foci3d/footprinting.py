@@ -3,7 +3,6 @@ import pandas as pd
 import pysam
 import numpy as np
 from scipy.ndimage import gaussian_filter
-import pyBigWig
 import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import defaultdict, Counter
@@ -890,34 +889,6 @@ def get_count_matrix(counts_gz: str,
     return mat, raw_total_counts
 
 
-def get_bw_signal(bw_path: str, chrom: str, start: int, end: int) -> float:
-    """
-    Returns the sum of signal in the BigWig file between [start, end) on a given chromosome.
-
-    Parameters:
-        bw_path: Path to the BigWig file
-        chrom: Chromosome name (e.g., 'chr1')
-        start: Window start (1-based inclusive)
-        end: Window end (1-based inclusive)
-
-    """
-    bw = pyBigWig.open(bw_path)
-    try:
-        vals = bw.values(chrom, start, end+1, numpy=True)
-        series = pd.Series(vals)
-        # replace NaNs with 0 and compute mean
-        series = series.fillna(0)
-    except Exception:
-        # Return a series of zeros if there is an error
-        series = pd.Series(np.zeros(end + 1 - start))
-    finally:
-        bw.close()
-    # Index the series by position
-    series.index = np.arange(start, end + 1)
-    return pd.Series(series)
-
-
-
 def plot_count_matrix(
     mat,
     title='',
@@ -1252,115 +1223,6 @@ def get_valid_windows(counts_gz, chromosomes=None, window_overlap_bp=0, window_s
                                 return all_windows
 
     return all_windows
-
-
-def get_footprint_and_procap(fragment_counts_gz,
-                             procap_bw,
-                             fragment_len_min, fragment_len_max,
-                             chrom=None, window_start=None, window_end=None,
-                             chromosomes=None, window_size=1024, window_overlap_bp=0, maxgap=1000, max_windows=None,
-                             footprint_sigma=10):
-    """
-    Get footprint and PRO-Cap data for specific genomic windows.
-
-    This function can be used in two ways:
-    1. Specify a single window with chrom, window_start, and window_end
-    2. Specify multiple windows using the chromosomes parameter (similar to get_valid_windows)
-
-    Parameters
-    ----------
-    fragment_counts_gz : str
-        Path to a bgzip-compressed, tabix-indexed TSV of:
-        chrom \t pos \t fragment_length \t count
-    procap_bw : str
-        Path to a BigWig file containing PRO-Cap data.
-    avg_count_per_fragment_length : dict
-        Dictionary mapping fragment length to average count per position.
-    fragment_len_min : int
-        Minimum fragment length to include in the output matrix.
-    fragment_len_max : int
-        Maximum fragment length to include in the output matrix.
-    chrom : str, optional
-        Chromosome name to fetch (e.g. 'chr1'). Used when specifying a single window.
-    window_start : int, optional
-        1-based inclusive window start. Used when specifying a single window.
-    window_end : int, optional
-        1-based inclusive window end. Used when specifying a single window.
-    chromosomes : list, optional
-        Either:
-        - List of chromosome names to process (e.g., ['chr1', 'chr2'])
-        - List of tuples specifying chromosome regions: [(chrom, start, end), ...]
-          where each tuple restricts windows to fall within the specified start/end positions
-        If provided, windows will be generated using get_valid_windows.
-    window_size : int, default 1024
-        Size of each window in base pairs. Used when chromosomes is provided.
-    window_overlap_bp : int, default 0
-        Number of base pairs to overlap between adjacent windows. Used when chromosomes is provided.
-    maxgap : int, default 1000
-        Maximum allowed gap between data points to consider a segment 'valid'. Used when chromosomes is provided.
-    max_windows : int, optional
-        Maximum number of windows to generate. Used when chromosomes is provided.
-    footprint_sigma : int, optional
-        Standard deviation for Gaussian kernel smoothing. Default is 10.
-
-    Returns
-    -------
-    If a single window is specified (using chrom, window_start, window_end):
-        tuple: (footprint, raw_total_counts, procap)
-        - footprint: pd.DataFrame with fragment lengths as rows and positions as columns
-        - raw_total_counts: pd.Series of total raw counts for each fragment length
-        - procap: pd.Series of PRO-Cap signal indexed by position
-
-    If multiple windows are specified (using chromosomes):
-        list of tuples: [(chrom, start, end, footprint, raw_total_counts, procap), ...]
-        Each tuple contains the window coordinates and the corresponding data.
-    """
-    # Case 1: Single window specified directly
-    if chrom is not None and window_start is not None and window_end is not None:
-        footprint, raw_total_counts = get_count_matrix(counts_gz=fragment_counts_gz,
-                                        chrom=chrom, window_start=window_start, window_end=window_end,
-                                        fragment_len_min=fragment_len_min, fragment_len_max=fragment_len_max,
-                                        scale="yes",
-                                        sigma=footprint_sigma)
-
-        procap = get_bw_signal(procap_bw, chrom, window_start, window_end)
-
-        return footprint, raw_total_counts, procap
-
-    # Case 2: Multiple windows specified using chromosomes
-    elif chromosomes is not None:
-        # Get windows using get_valid_windows
-        windows = get_valid_windows(
-            counts_gz=fragment_counts_gz,
-            chromosomes=chromosomes,
-            window_overlap_bp=window_overlap_bp,
-            window_size=window_size,
-            maxgap=maxgap,
-            max_windows=max_windows
-        )
-
-        # Process each window
-        results = []
-        for window_chrom, window_start, window_end in windows:
-            footprint, raw_total_counts = get_count_matrix(
-                counts_gz=fragment_counts_gz,
-                chrom=window_chrom,
-                window_start=window_start,
-                window_end=window_end,
-                fragment_len_min=fragment_len_min,
-                fragment_len_max=fragment_len_max,
-                scale="yes",
-                sigma=footprint_sigma
-            )
-
-            procap = get_bw_signal(procap_bw, window_chrom, window_start, window_end)
-
-            results.append((window_chrom, window_start, window_end, footprint, raw_total_counts, procap))
-
-        return results
-
-    else:
-        raise ValueError("Either (chrom, window_start, window_end) or chromosomes must be provided")
 
 
 def detect_footprints(counts_gz,

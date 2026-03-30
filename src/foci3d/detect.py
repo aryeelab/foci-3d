@@ -2,8 +2,8 @@
 """
 Command line script for detecting footprints in genomic data.
 
-This script implements footprint detection functionality using the existing functions
-from footprinting.py, providing a command line interface for batch processing
+This script implements footprint detection functionality using the shared FOCI-3D
+analysis functions, providing a command line interface for batch processing
 of genomic regions with statistical significance testing.
 """
 
@@ -13,7 +13,6 @@ import os
 import pickle
 import re
 import time
-import psutil
 from pathlib import Path
 
 # Handle potential import issues gracefully
@@ -37,13 +36,7 @@ try:
 except ImportError:
     PSUTIL_AVAILABLE = False
 
-# Import functions from the footprinting module
-try:
-    from footprinting import average_counts_by_fraglen, detect_footprints, most_common_fragment_length
-except ImportError as e:
-    print(f"Error: Cannot import footprinting module: {e}", file=sys.stderr)
-    print("Please ensure footprinting.py is in the same directory or in your Python path.", file=sys.stderr)
-    sys.exit(1)
+from . import footprinting
 
 # Try to import matplotlib for QC plots (optional)
 try:
@@ -245,7 +238,7 @@ def calculate_normalization_factors(counts_gz, chromosomes, gap_thresh=5000, out
         try:
             # Use by_fragment_length=True to avoid the expensive most_common_fragment_length call
             # This uses the optimized sampling-based approach (500 regions × 5KB = ~2.5MB total)
-            avg_by_len = average_counts_by_fraglen(
+            avg_by_len = footprinting.average_counts_by_fraglen(
                 counts_gz,
                 chrom,
                 gap_thresh=gap_thresh,
@@ -295,13 +288,12 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
     This function splits the window processing into smaller batches to avoid memory issues
     with very large datasets, especially on M1 Macs with limited memory.
     """
-    from footprinting import get_valid_windows
     from tqdm import tqdm
     import gc
 
     # Get all valid windows first
     print("Getting valid windows...")
-    all_windows = get_valid_windows(
+    all_windows = footprinting.get_valid_windows(
         counts_gz=counts_gz,
         chromosomes=chromosomes,
         window_size=window_size
@@ -359,13 +351,10 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
         try:
             # Use the original detect_footprints function but with the batch of windows
             # We'll call the internal processing function directly
-            from footprinting import detect_footprints
-
             # Temporarily replace the windows in the function by monkey-patching
             # This is a bit hacky but avoids duplicating the entire function
             original_get_valid_windows = None
             try:
-                import footprinting
                 original_get_valid_windows = footprinting.get_valid_windows
 
                 # Create a mock function that returns our batch
@@ -379,7 +368,6 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
                 original_tqdm = None
                 original_print = None
                 try:
-                    import footprinting
                     import builtins
                     original_tqdm = footprinting.tqdm
                     original_print = builtins.print
@@ -431,7 +419,7 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
                     builtins.print = selective_print
 
                     # Now call detect_footprints which will use our batch and progress tracking
-                    batch_results = detect_footprints(
+                    batch_results = footprinting.detect_footprints(
                         counts_gz=counts_gz,
                         chromosomes=chromosomes,  # This will be ignored due to our mock
                         window_size=window_size,
@@ -775,8 +763,10 @@ def calculate_pvalues_weibull(footprints, threshold=10.0, timing_stats=None):
     return footprints
 
 
-def main():
+def build_parser(add_help: bool = True, prog: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog=prog,
+        add_help=add_help,
         description="Detect footprints in genomic data with statistical significance testing",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -895,7 +885,12 @@ Examples:
                         help='Generate QC diagnostic plots (p-value histogram and signal distribution with Weibull fit). '
                              'Plots will be saved in the same directory as the output file.')
 
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv=None, prog: str | None = None):
+    parser = build_parser(prog=prog)
+    args = parser.parse_args(argv)
 
     # Initialize timing statistics (default behavior is to show stats unless --nostats is specified)
     show_timing = not args.nostats or args.verbose
@@ -1011,8 +1006,7 @@ Examples:
             timing_stats.start_timer("Reading embedded scale factors")
 
         try:
-            from footprinting import get_scale_factors
-            embedded_scale_factors = get_scale_factors(args.input, by_fragment_length=True)
+            embedded_scale_factors = footprinting.get_scale_factors(args.input, by_fragment_length=True)
 
             if embedded_scale_factors:
                 print(f"Using embedded normalization factors from input file header ({len(embedded_scale_factors)} fragment lengths)")
@@ -1053,7 +1047,7 @@ Examples:
 
         # Find most common fragment length
         try:
-            most_common_frag_len = most_common_fragment_length(args.input)
+            most_common_frag_len = footprinting.most_common_fragment_length(args.input)
             if most_common_frag_len is not None:
                 timing_stats.add_stat("Most common fragment length", most_common_frag_len)
                 # Also add the signal for the most common fragment length
@@ -1189,8 +1183,7 @@ Examples:
     # Write scale factors as the first line, then the DataFrame
     with open(args.output, 'w') as f:
         # Get scale factors from the input file to write to output
-        from footprinting import get_scale_factors
-        scale_factors_for_output = get_scale_factors(args.input, by_fragment_length=True)
+        scale_factors_for_output = footprinting.get_scale_factors(args.input, by_fragment_length=True)
         # Write scale factors header as the first line
         f.write(f"# scale_factors: {scale_factors_for_output}\n")
         # Write the DataFrame

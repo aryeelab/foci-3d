@@ -1,39 +1,17 @@
-# Footprint Tools Tests
+# FOCI-3D Tests
 
-This directory contains tests for the footprint-tools package.
-
-## Running Tests
-
-To run all tests:
+Run the test suite from the development environment:
 
 ```bash
-# Activate the footprint-tools environment
-conda activate footprint-tools
-
-# Run all tests
-cd tests
-python3 run_tests.py
+conda activate foci-3d-dev
+python tests/run_tests.py
 ```
 
-To run a specific test:
+The tests exercise:
 
-```bash
-# Run a specific test file
-python3 test_pairs_to_fragment_counts.py
-```
+- CLI help for `foci-3d`, `count`, `detect`, and `plot`
+- the end-to-end count pipeline on bundled fixture data
+- footprint detection on the bundled counts fixture
+- plot rendering for a small genomic interval
 
-## Test Files
-
-- `test_pairs_to_fragment_counts.py`: Tests the functionality of the `pairs_to_fragment_counts.py` script, which executes the complete pipeline from pairs files to tabix-indexed fragment counts with embedded normalization scale factors. This test validates the entire pipeline including conversion, sorting, counting, scale factor computation, and tabix indexing. Uses a hardcoded MD5 checksum to validate the output format and content.
-
-## Adding New Tests
-
-To add a new test:
-
-1. Create a new Python file in the `tests` directory with a name starting with `test_`.
-2. Use the `unittest` framework to write your tests.
-3. Run the tests using `run_tests.py`.
-
-## Test Data
-
-Test data is stored in the `test_data` directory at the root of the repository.
+The count pipeline test is skipped automatically if required external tools are not available on `PATH`.

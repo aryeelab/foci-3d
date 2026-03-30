@@ -3,3 +3,6 @@
 */wandb/*
 data/*
 plots/*
+__pycache__/
+*.pyc
+.mplconfig/

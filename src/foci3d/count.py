@@ -36,6 +36,12 @@ from typing import Optional, Tuple, Dict, Any
 import signal
 from collections import defaultdict
 
+CONDA_INSTALL_HINT = (
+    "Create the supported environment with "
+    "`conda env create -f environment.yml && conda activate foci-3d`."
+)
+
+
 def format_time_hms(seconds: float) -> str:
     """Format time in hours:minutes:seconds format with whole seconds."""
     total_seconds = int(round(seconds))
@@ -197,11 +203,11 @@ class FragmentCountsPipeline:
 
     def _compute_scale_factors(self, counts_file: Path) -> Dict[int, float]:
         """Compute normalization scale factors using average_counts_by_fraglen."""
-        # Import the function from footprinting.py
+        # Import the shared normalization helper from the package
         try:
-            from footprinting import average_counts_by_fraglen
+            from .footprinting import average_counts_by_fraglen
         except ImportError:
-            print("Warning: Could not import average_counts_by_fraglen from footprinting.py", file=sys.stderr)
+            print("Warning: Could not import average_counts_by_fraglen from foci3d.footprinting", file=sys.stderr)
             print("Scale factors will not be computed.", file=sys.stderr)
             return {}
 
@@ -276,13 +282,13 @@ class FragmentCountsPipeline:
         print("Step 1: Converting pairs to fragments...", file=sys.stderr)
         step_start = time.time()
 
-        # Find the pairs_to_fragments_tsv.py script
-        script_path = Path(__file__).parent / "pairs_to_fragments_tsv.py"
-        if not script_path.exists():
-            raise PipelineError(f"pairs_to_fragments_tsv.py not found at {script_path}")
-
-        # Run the conversion (use absolute paths and don't change directory)
-        cmd = [sys.executable, str(script_path), str(self.input_file.absolute()), str(self.fragments_file)]
+        cmd = [
+            sys.executable,
+            "-m",
+            "foci3d.pairs_to_fragments_tsv",
+            str(self.input_file.absolute()),
+            str(self.fragments_file),
+        ]
         self._run_command(cmd, "Pairs to fragments conversion", use_temp_cwd=False)
 
         # Collect statistics
@@ -642,9 +648,11 @@ class FragmentCountsPipeline:
         print(f"Ready for footprint analysis: {self.output_file}", file=sys.stderr)
 
 
-def main():
-    """Main function with command-line interface."""
+def build_parser(add_help: bool = True, prog: str | None = None) -> argparse.ArgumentParser:
+    """Build the command-line parser for the count subcommand."""
     parser = argparse.ArgumentParser(
+        prog=prog,
+        add_help=add_help,
         description="Fragment Pairs to Fragment Counts Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -660,16 +668,16 @@ Pipeline Steps:
 
 Examples:
   # Basic usage with auto-generated output name
-  python pairs_to_fragment_counts.py input.pairs
+  foci-3d count input.pairs
 
   # Specify custom output file
-  python pairs_to_fragment_counts.py input.pairs -o output.counts.tsv.gz
+  foci-3d count input.pairs -o output.counts.tsv.gz
 
   # Keep intermediate files for debugging
-  python pairs_to_fragment_counts.py input.pairs --keep-intermediates
+  foci-3d count input.pairs --keep-intermediates
 
   # Verbose output with detailed progress
-  python pairs_to_fragment_counts.py input.pairs --verbose
+  foci-3d count input.pairs --verbose
 
 Output:
   - Main output: Tabix-indexed fragment counts file (.counts.tsv.gz)
@@ -710,10 +718,27 @@ Performance:
     parser.add_argument(
         "--version",
         action="version",
-        version="Fragment Counts Pipeline v1.0"
+        version="foci-3d count 0.1.0"
     )
 
-    args = parser.parse_args()
+    return parser
+
+
+def check_required_tools() -> list[str]:
+    required_tools = ["pairtools", "sort", "uniq", "awk", "bgzip", "tabix"]
+    missing_tools = []
+
+    for tool in required_tools:
+        if shutil.which(tool) is None:
+            missing_tools.append(tool)
+
+    return missing_tools
+
+
+def main(argv=None, prog: str | None = None):
+    """Main function with command-line interface."""
+    parser = build_parser(prog=prog)
+    args = parser.parse_args(argv)
 
     # Validate input file
     if not os.path.exists(args.input_file):
@@ -721,21 +746,12 @@ Performance:
         sys.exit(1)
 
     # Check for required external tools
-    required_tools = ['sort', 'uniq', 'awk', 'bgzip', 'tabix']
-    missing_tools = []
-
-    for tool in required_tools:
-        try:
-            subprocess.run([tool, '--version'], capture_output=True, check=True)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            try:
-                subprocess.run(['which', tool], capture_output=True, check=True)
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                missing_tools.append(tool)
+    missing_tools = check_required_tools()
 
     if missing_tools:
         print(f"Error: Required tools not found: {', '.join(missing_tools)}", file=sys.stderr)
         print("Please install the missing tools and ensure they are in your PATH.", file=sys.stderr)
+        print(CONDA_INSTALL_HINT, file=sys.stderr)
         sys.exit(1)
 
     try:

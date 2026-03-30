@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "foci-3d"
+version = "0.1.0"
+description = "FOCI-3D tools for Micro-C transcription factor footprint analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "joblib",
+  "matplotlib",
+  "numpy>=1.22,<2.0a0",
+  "pandas",
+  "psutil",
+  "pysam",
+  "scikit-image",
+  "scipy",
+  "seaborn",
+  "statsmodels",
+  "tqdm",
+]
+
+[project.optional-dependencies]
+dev = [
+  "hatchling>=1.27",
+  "pytest>=8.0",
+]
+
+[project.scripts]
+foci-3d = "foci3d.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/foci3d"]
