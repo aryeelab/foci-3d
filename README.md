@@ -25,9 +25,9 @@ The Conda environment provides the required non-Python tools for the core workfl
 If you are starting from BAM input, one typical upstream workflow is:
 
 ```bash
-SAMPLE="test_data/mesc_microc_test"
+SAMPLE="tests/data/mesc_microc_test"
 min_mapq=20
-chrom_sizes=test_data/mm10.chrom.sizes
+chrom_sizes=tests/data/mm10.chrom.sizes
 
 samtools view -h ${SAMPLE}.bam | \
 pairtools parse --min-mapq ${min_mapq} --walks-policy 5unique --drop-sam \
@@ -42,7 +42,7 @@ pairtools dedup -o ${SAMPLE}.pairs
 Convert fragment pairs into a bgzip-compressed, tabix-indexed counts matrix:
 
 ```bash
-foci-3d count test_data/mesc_microc_test.pairs -o test_data/mesc_microc_test.counts.tsv.gz
+foci-3d count tests/data/mesc_microc_test.pairs -o tests/data/mesc_microc_test.counts.tsv.gz
 ```
 
 ### Detect
@@ -51,8 +51,8 @@ Detect footprints from the counts matrix:
 
 ```bash
 foci-3d detect \
-  -i test_data/mesc_microc_test.counts.tsv.gz \
-  -o test_data/mesc_microc_test.footprints.tsv \
+  -i tests/data/mesc_microc_test.counts.tsv.gz \
+  -o tests/data/mesc_microc_test.footprints.tsv \
   -r chr8
 ```
 
@@ -62,8 +62,8 @@ Render a heatmap image for a genomic interval:
 
 ```bash
 foci-3d plot \
-  -i test_data/mesc_microc_test.counts.tsv.gz \
-  -o test_data/mesc_microc_test.region.png \
+  -i tests/data/mesc_microc_test.counts.tsv.gz \
+  -o tests/data/mesc_microc_test.region.png \
   -r chr8:23237000-23238000
 ```
 
@@ -71,10 +71,10 @@ Overlay detected footprints on the heatmap:
 
 ```bash
 foci-3d plot \
-  -i test_data/mesc_microc_test.counts.tsv.gz \
-  -o test_data/mesc_microc_test.region.annotated.png \
+  -i tests/data/mesc_microc_test.counts.tsv.gz \
+  -o tests/data/mesc_microc_test.region.annotated.png \
   -r chr8:23237000-23238000 \
-  --footprints test_data/mesc_microc_test.footprints.tsv
+  --footprints tests/data/mesc_microc_test.footprints.tsv
 ```
 
 ## Python API
@@ -82,7 +82,7 @@ foci-3d plot \
 ```python
 from foci3d import get_count_matrix, plot_count_matrix
 
-counts_gz = "test_data/mesc_microc_test.counts.tsv.gz"
+counts_gz = "tests/data/mesc_microc_test.counts.tsv.gz"
 chrom = "chr8"
 start_bp = 23_237_000
 end_bp = 23_238_000
@@ -117,7 +117,7 @@ For development work:
 
 ```bash
 conda env create -f environment-dev.yml
-conda activate foci-3d-dev
+conda activate foci-3d
 pip install -e .
 python tests/run_tests.py
 ```

@@ -17,7 +17,7 @@ class TestPairsToFragmentCounts(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.repo_root = REPO_ROOT
-        cls.input_pairs_file = cls.repo_root / "test_data" / "mesc_microc_test.pairs"
+        cls.input_pairs_file = cls.repo_root / "tests" / "data" / "mesc_microc_test.pairs"
         cls.temp_dir = tempfile.mkdtemp()
         cls.temp_output_file = Path(cls.temp_dir) / "test_output.counts.tsv.gz"
         cls.expected_md5 = "4e52532340a170e541c5c743e4ba940d"

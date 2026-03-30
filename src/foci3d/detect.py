@@ -772,31 +772,31 @@ def build_parser(add_help: bool = True, prog: str | None = None) -> argparse.Arg
         epilog="""
 Examples:
   # Process whole chromosomes
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr1,chr2,chr3
+  %(prog)s -i tests/data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr1,chr2,chr3
 
   # Process specific regions
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr1:20000000-30000000,chr2:50000000-60000000
+  %(prog)s -i tests/data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr1:20000000-30000000,chr2:50000000-60000000
 
   # Process all chromosomes (no -r specified)
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv
+  %(prog)s -i tests/data/mesc_microc_test.counts.tsv.gz -o footprints.tsv
 
   # Use pre-calculated normalization factors (overrides embedded factors)
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr1 --norm-factors norm_factors.pkl
+  %(prog)s -i tests/data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr1 --norm-factors norm_factors.pkl
 
   # Save embedded normalization factors for reuse
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr1 --save-norm-factors norm_factors.pkl
+  %(prog)s -i tests/data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr1 --save-norm-factors norm_factors.pkl
 
   # Adjust detection parameters
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --threshold 15.0 --sigma 2.0 --min-size 10
+  %(prog)s -i tests/data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --threshold 15.0 --sigma 2.0 --min-size 10
 
   # Skip statistical significance testing (faster)
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --skip-pvalues
+  %(prog)s -i tests/data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --skip-pvalues
 
   # Suppress timing and processing statistics (statistics shown by default)
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --nostats
+  %(prog)s -i tests/data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --nostats
 
   # Enable verbose output with step-by-step timing
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --verbose
+  %(prog)s -i tests/data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --verbose
 
   # Memory management for large datasets
   %(prog)s -i data/large_dataset.counts.tsv.gz -o footprints.tsv --low-memory --batch-size 500 --num-cores 4
@@ -805,10 +805,10 @@ Examples:
   %(prog)s -i data/large_dataset.counts.tsv.gz -o footprints.tsv --max-memory-gb 16 --batch-size 2000
 
   # Filter footprints by q-value (FDR) threshold
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --qcutoff 0.05
+  %(prog)s -i tests/data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --qcutoff 0.05
 
   # Use more lenient FDR threshold
-  %(prog)s -i test_data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --qcutoff 0.2
+  %(prog)s -i tests/data/mesc_microc_test.counts.tsv.gz -o footprints.tsv -r chr8 --qcutoff 0.2
         """)
 
     # Required arguments

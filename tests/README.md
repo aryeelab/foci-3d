@@ -3,7 +3,7 @@
 Run the test suite from the development environment:
 
 ```bash
-conda activate foci-3d-dev
+conda activate foci-3d
 python tests/run_tests.py
 ```
 

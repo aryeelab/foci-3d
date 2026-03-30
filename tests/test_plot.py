@@ -11,7 +11,7 @@ from helpers import REPO_ROOT, subprocess_env
 
 class TestPlotCommand(unittest.TestCase):
     def test_plot_creates_image(self):
-        counts_file = REPO_ROOT / "test_data" / "mesc_microc_test.counts.tsv.gz"
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "plot.png"
             cmd = [
