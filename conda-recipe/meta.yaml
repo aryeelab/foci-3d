@@ -7,7 +7,7 @@ package:
 
 source:
   url: https://github.com/aryeelab/foci-3d/archive/refs/tags/v{{ version }}.tar.gz
-  sha256: REPLACE_WITH_RELEASE_TARBALL_SHA256
+  sha256: 6217f19b22148d2f0f9cf2ed21eecef88ef71b18cc0d7fef62d6984075228d7d
 
 build:
   noarch: python
