@@ -42,6 +42,7 @@ test:
     - foci3d
   commands:
     - foci-3d --help
+    - foci-3d parse --help
     - foci-3d count --help
     - foci-3d detect --help
     - foci-3d plot --help

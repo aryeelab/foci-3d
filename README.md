@@ -17,18 +17,15 @@ This installs the Python package together with the external bioinformatics tools
 
 ## Quickstart
 
-### Prepare a `.pairs` file
+### Parsing pairs from a bam
 
-If you are starting from BAM input, one typical upstream workflow is:
+Create a deduplicated `.pairs` file from a BAM:
 
 ```bash
-samtools view -h tests/data/mesc_microc_test.bam | \
-pairtools parse --min-mapq 20 --walks-policy 5unique --drop-sam \
-  --max-inter-align-gap 30 --add-columns pos5,pos3 \
-  --chroms-path tests/data/mm10.chrom.sizes | \
-pairtools sort | \
-pairtools dedup -o test.pairs
+foci-3d parse tests/data/mesc_microc_test.bam -o test.pairs
 ```
+
+Note: If you do not pass `--chroms-path`, it generates a temporary chrom sizes file from the BAM header automatically.
 
 ### Count fragments
 
@@ -99,10 +96,30 @@ plot_count_matrix(count_mat, xtick_spacing=200, figsize=(10, 1.5))
 
 ```bash
 foci-3d --help
+foci-3d parse --help
 foci-3d count --help
 foci-3d detect --help
 foci-3d plot --help
 ```
+
+### Parsing pairs: If you want more control
+
+If you'd like to run `pairtools parse` yourself (instead of using the simplified `foci-3d parse` wrapper), you can do something like:
+
+```bash
+samtools view -h tests/data/mesc_microc_test.bam | \
+pairtools parse --min-mapq 30 --walks-policy 5unique --drop-sam \
+  --max-inter-align-gap 30 --add-columns pos5,pos3 \
+  --chroms-path tests/data/mm10.chrom.sizes | \
+pairtools sort | \
+pairtools dedup -o test.pairs
+```
+
+Important points:
+
+`-add-columns pos5,pos3` is needed to allow fragment length calculation. The default output includes only one coordinate per fragment as this is all that is needed for a contact map.
+
+The alignments from the same pair (i.e. those with the same READ ID) need to appear next to each other. Samtools name sorting achieves this, as does output directly from bwa (without coordinate sorting).
 
 ## Development
 
@@ -120,12 +137,25 @@ pip install -e .
 python tests/run_tests.py
 ```
 
-### Build The Conda Package
+## Build The Conda Package
 
 The repository includes a Conda recipe in `conda-recipe/`.
 
 ```bash
 conda build conda-recipe
+```
+
+## Advanced Manual BAM-to-pairs Workflow
+
+If you want to run the underlying tools manually, the equivalent workflow is:
+
+```bash
+samtools view -h tests/data/mesc_microc_test.bam | \
+pairtools parse --min-mapq 30 --walks-policy 5unique --drop-sam \
+  --max-inter-align-gap 30 --add-columns pos5,pos3 \
+  --chroms-path tests/data/mm10.chrom.sizes | \
+pairtools sort | \
+pairtools dedup -o test.pairs
 ```
 
 The development repository lives at [aryeelab/foci-3d](https://github.com/aryeelab/foci-3d).

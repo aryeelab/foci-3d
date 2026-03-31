@@ -6,9 +6,10 @@ import argparse
 import sys
 
 from . import __version__
-from . import count, detect, plot
+from . import count, detect, parse, plot
 
 COMMANDS = {
+    "parse": parse,
     "count": count,
     "detect": detect,
     "plot": plot,
@@ -34,7 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in {"-h", "--help"}:
         parser = build_parser()
         parser.print_help()
-        print("\nCommands:\n  count   Convert .pairs input to tabix-indexed counts")
+        print("\nCommands:\n  parse   Convert BAM input to final .pairs output")
+        print("  count   Convert .pairs input to tabix-indexed counts")
         print("  detect  Detect footprints from counts matrices")
         print("  plot    Render a footprint heatmap image from counts data")
         return 0

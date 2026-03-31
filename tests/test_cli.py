@@ -21,9 +21,17 @@ class TestCliHelp(unittest.TestCase):
         result = self.run_cli("--help")
         self.assertEqual(result.returncode, 0)
         self.assertIn("FOCI-3D", result.stdout)
+        self.assertIn("parse", result.stdout)
         self.assertIn("count", result.stdout)
         self.assertIn("detect", result.stdout)
         self.assertIn("plot", result.stdout)
+
+    def test_parse_help(self):
+        result = self.run_cli("parse", "--help")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Convert a BAM into a final deduplicated .pairs file", result.stdout)
+        self.assertIn("--min-mapq", result.stdout)
+        self.assertIn("--chroms-path", result.stdout)
 
     def test_count_help(self):
         result = self.run_cli("count", "--help")
