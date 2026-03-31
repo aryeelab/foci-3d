@@ -25,6 +25,8 @@ Create a deduplicated `.pairs` file from a BAM:
 foci-3d parse tests/data/mesc_microc_test.bam -o test.pairs
 ```
 
+`foci-3d parse` is a simple wrapper around `pairtools parse` with reasonable defaults for this workflow.
+
 Note: If you do not pass `--chroms-path`, it generates a temporary chrom sizes file from the BAM header automatically.
 
 ### Count fragments
