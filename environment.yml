@@ -19,3 +19,6 @@ dependencies:
   - tqdm
   - joblib
   - scipy
+  - pytest
+  - hatchling
+  - conda-build

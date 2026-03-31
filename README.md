@@ -1,22 +1,19 @@
 # FOCI-3D
 
-FOCI-3D is a toolkit for analyzing transcription factor footprints from Micro-C and related chromosome conformation capture data. The supported workflow is:
+FOCI-3D (Footprinting Of Chromatin Interactions in 3D) is a toolkit for analyzing transcription factor footprints from Micro-C, Region Capture Micro-C (RCMC) and related MNase-based chromosome conformation capture assays. The supported workflow is:
 
-1. convert `.pairs` data into tabix-indexed fragment-count matrices
-2. detect footprints from those count matrices
-3. render footprint heatmaps for inspection
+1. generate a `.pairs` file containing ligation fragment start and end positions from a bam.
+2. compute a fragment midpoint x fragment length 2D histogram of fragment counts
+3. (optionally) detect statistically significant footprints
+4. visualize 2D footprint heatmaps
 
 ## Install
 
-FOCI-3D uses Conda for environment isolation and external bioinformatics tools, and `pip` for installing the Python package.
-
 ```bash
-conda env create -f environment.yml
-conda activate foci-3d
-pip install git+https://github.com/aryeelab/foci-3d.git
+conda install -c conda-forge -c bioconda foci-3d
 ```
 
-The Conda environment provides the required non-Python tools for the core workflow, including `pairtools`, `bgzip`, `tabix`, and `samtools`.
+This installs the Python package together with the external bioinformatics tools required for the core workflow, including `samtools`, `pairtools`, `bgzip` and `tabix`.
 
 ## Quickstart
 
@@ -25,23 +22,20 @@ The Conda environment provides the required non-Python tools for the core workfl
 If you are starting from BAM input, one typical upstream workflow is:
 
 ```bash
-SAMPLE="tests/data/mesc_microc_test"
-chrom_sizes=tests/data/mm10.chrom.sizes
-
-samtools view -h ${SAMPLE}.bam | \
+samtools view -h tests/data/mesc_microc_test.bam | \
 pairtools parse --min-mapq 20 --walks-policy 5unique --drop-sam \
   --max-inter-align-gap 30 --add-columns pos5,pos3 \
-  --chroms-path ${chrom_sizes} | \
+  --chroms-path tests/data/mm10.chrom.sizes | \
 pairtools sort | \
-pairtools dedup -o ${SAMPLE}.pairs
+pairtools dedup -o test.pairs
 ```
 
-### Count
+### Count fragments
 
-Convert fragment pairs into a bgzip-compressed, tabix-indexed counts matrix:
+Make a 2D histogram where each fragment is represented by (fragment midpoint, fragment length). The matrix is bgzip-compressed and tabix-indexed.
 
 ```bash
-foci-3d count tests/data/mesc_microc_test.pairs -o tests/data/mesc_microc_test.counts.tsv.gz
+foci-3d count test.pairs -o test.counts.tsv.gz
 ```
 
 ### Detect
@@ -50,8 +44,8 @@ Detect footprints from the counts matrix:
 
 ```bash
 foci-3d detect \
-  -i tests/data/mesc_microc_test.counts.tsv.gz \
-  -o tests/data/mesc_microc_test.footprints.tsv \
+  -i test.counts.tsv.gz \
+  -o test.footprints.tsv \
   -r chr8
 ```
 
@@ -61,8 +55,8 @@ Render a heatmap image for a genomic interval:
 
 ```bash
 foci-3d plot \
-  -i tests/data/mesc_microc_test.counts.tsv.gz \
-  -o tests/data/mesc_microc_test.region.png \
+  -i test.counts.tsv.gz \
+  -o test.png \
   -r chr8:23237000-23238000
 ```
 
@@ -70,10 +64,10 @@ Overlay detected footprints on the heatmap:
 
 ```bash
 foci-3d plot \
-  -i tests/data/mesc_microc_test.counts.tsv.gz \
-  -o tests/data/mesc_microc_test.region.annotated.png \
+  -i test.counts.tsv.gz \
+  -o test.annotated.png \
   -r chr8:23237000-23238000 \
-  --footprints tests/data/mesc_microc_test.footprints.tsv
+  --footprints test.footprints.tsv
 ```
 
 ## Python API
@@ -81,7 +75,7 @@ foci-3d plot \
 ```python
 from foci3d import get_count_matrix, plot_count_matrix
 
-counts_gz = "tests/data/mesc_microc_test.counts.tsv.gz"
+counts_gz = "test.counts.tsv.gz"
 chrom = "chr8"
 start_bp = 23_237_000
 end_bp = 23_238_000
@@ -112,13 +106,26 @@ foci-3d plot --help
 
 ## Development
 
-For development work:
+For development work from a local checkout and set up a conda environment:
 
 ```bash
-conda env create -f environment-dev.yml
+conda env create -f environment.yml
 conda activate foci-3d
+```
+
+### For local development and testing use pip
+
+```bash
 pip install -e .
 python tests/run_tests.py
 ```
 
-The development repository now lives at [aryeelab/foci-3d](https://github.com/aryeelab/foci-3d).
+### Build The Conda Package
+
+The repository includes a Conda recipe in `conda-recipe/`.
+
+```bash
+conda build conda-recipe
+```
+
+The development repository lives at [aryeelab/foci-3d](https://github.com/aryeelab/foci-3d).
