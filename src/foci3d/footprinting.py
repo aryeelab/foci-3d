@@ -914,6 +914,36 @@ def get_count_matrix(counts_gz: str,
     return mat, raw_total_counts
 
 
+def _nice_bp_spacing(raw_spacing):
+    """
+    Round a raw genomic tick spacing up to a human-friendly 1/2/5*10^n interval.
+    """
+    raw_spacing = max(1, int(np.ceil(raw_spacing)))
+    magnitude = 10 ** int(np.floor(np.log10(raw_spacing)))
+    normalized = raw_spacing / magnitude
+    if normalized <= 1:
+        nice = 1
+    elif normalized <= 2:
+        nice = 2
+    elif normalized <= 5:
+        nice = 5
+    else:
+        nice = 10
+    return int(nice * magnitude)
+
+
+def _auto_xtick_spacing(start_bp, end_bp, fig_width_inches):
+    """
+    Choose a genomic tick spacing that keeps labels readable for the current span
+    and figure width.
+    """
+    span_bp = max(1, end_bp - start_bp)
+    usable_width = max(float(fig_width_inches) - 1.0, 2.0)
+    max_ticks = max(2, int(np.floor(usable_width / 1.5)))
+    raw_spacing = span_bp / max_ticks
+    return _nice_bp_spacing(raw_spacing)
+
+
 def plot_count_matrix(
     mat,
     title='',
@@ -927,7 +957,7 @@ def plot_count_matrix(
     blob_marker='o',        # Marker style for blobs
     blob_color='white',     # Color for blob markers
     blob_size=5,            # Size of blob markers
-    xtick_spacing=1000,
+    xtick_spacing=None,
     figsize=(10, 4),
     aspect='auto',
     return_fig=False
@@ -959,8 +989,9 @@ def plot_count_matrix(
         Color for blob markers (default='white').
     blob_size : int, optional
         Size of blob markers (default=5).
-    xtick_spacing : int, optional
-        Spacing between x-axis ticks in base pairs.
+    xtick_spacing : int or None, optional
+        Spacing between x-axis ticks in base pairs. If None, choose a readable
+        interval automatically from the genomic span and figure width.
     figsize : tuple
         Figure size in inches.
     aspect : str or float
@@ -1078,8 +1109,13 @@ def plot_count_matrix(
                 )
 
     # Prepare x-ticks (shared by bottom track)
-    xtick_positions = np.arange(start_bp, end_bp+1, xtick_spacing) - start_bp
-    xtick_labels = [f"{v:,}" for v in np.arange(start_bp, end_bp+1, xtick_spacing)]
+    xtick_spacing_plot = xtick_spacing
+    if xtick_spacing_plot is None:
+        xtick_spacing_plot = _auto_xtick_spacing(start_bp, end_bp, figsize[0])
+    first_tick = int(np.ceil(start_bp / xtick_spacing_plot) * xtick_spacing_plot)
+    xtick_values = np.arange(first_tick, end_bp + 1, xtick_spacing_plot)
+    xtick_positions = xtick_values - start_bp
+    xtick_labels = [f"{v:,}" for v in xtick_values]
 
     # Draw each additional track below if provided
     if tracks:
@@ -1112,6 +1148,7 @@ def plot_count_matrix(
         return fig
     else:
         plt.show()
+
 
 def get_valid_windows(counts_gz, chromosomes=None, window_overlap_bp=0, window_size=1024, maxgap=1000, max_windows=None):
     """

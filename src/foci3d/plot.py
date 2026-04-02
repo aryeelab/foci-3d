@@ -61,7 +61,12 @@ def build_parser(add_help: bool = True, prog: str | None = None) -> argparse.Arg
         help="Scaling method applied before plotting",
     )
     parser.add_argument("--sigma", type=float, default=10.0, help="Gaussian smoothing sigma")
-    parser.add_argument("--xtick-spacing", type=int, default=200, help="Distance between x-axis ticks in bp")
+    parser.add_argument(
+        "--xtick-spacing",
+        type=int,
+        default=None,
+        help="Distance between x-axis ticks in bp. If omitted, choose a readable spacing automatically",
+    )
     parser.add_argument("--fig-width", type=float, default=10.0, help="Figure width in inches")
     parser.add_argument("--fig-height", type=float, default=1.5, help="Figure height in inches")
     parser.add_argument("--dpi", type=int, default=200, help="Output image DPI")
