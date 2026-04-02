@@ -753,7 +753,7 @@ def get_count_matrix(counts_gz: str,
                      window_start: int,
                      window_end: int,
                      fragment_len_min = 25,
-                     fragment_len_max = 150,
+                     fragment_len_max = None,
                      scale = "yes",
                      sigma = 0,
                      log = False) -> pd.DataFrame:
@@ -775,8 +775,9 @@ def get_count_matrix(counts_gz: str,
         1-based inclusive window end.
     fragment_len_min : int
         Minimum fragment length to include in the output matrix.
-    fragment_len_max : int
-        Maximum fragment length to include in the output matrix.
+    fragment_len_max : int or None
+        Maximum fragment length to include in the output matrix. If None, use
+        the most common fragment length implied by the scale factors.
     scale : str, optional
         Scaling method to apply to counts (default: "yes").
         Options:
@@ -805,11 +806,14 @@ def get_count_matrix(counts_gz: str,
         raise ValueError(f"scale parameter must be one of {valid_scale_options}, got: {scale}")
 
     # Convert scale parameter to scale_factor_dict
+    raw_scale_factor_dict = None
     if scale == "no":
         scale_factor_dict = None
     elif scale == "by_fragment_length":
-        scale_factor_dict = get_scale_factors(counts_gz, by_fragment_length=True)
+        raw_scale_factor_dict = get_scale_factors(counts_gz, by_fragment_length=True)
+        scale_factor_dict = raw_scale_factor_dict
     elif scale == "yes":
+        raw_scale_factor_dict = get_scale_factors(counts_gz, by_fragment_length=True)
         scale_factor_dict = get_scale_factors(counts_gz, by_fragment_length=False)
 
     # open tabix file and fetch lines
@@ -841,25 +845,31 @@ def get_count_matrix(counts_gz: str,
         })
         df = pd.concat([df, missing_df], ignore_index=True)
 
-    # Cap fragment length to fragment_len_max. i.e. the fragment_length==fragment_len_max row represents
-    # the sum of all fragments >= fragment_len_max.
-    df_low = df[df['fragment_length'] < fragment_len_max].copy()
-    df_high = df[df['fragment_length'] >= fragment_len_max]
-    df_high_agg = (df_high.groupby(['chrom','pos'], as_index=False)['count'].sum())
-    df_high_agg['fragment_length'] = fragment_len_max
-    df = pd.concat([df_low, df_high_agg], ignore_index=True)
-    df = df.sort_values(['chrom','pos','fragment_length']).reset_index(drop=True)
+    effective_fragment_len_max = fragment_len_max
+    if effective_fragment_len_max is None:
+        if raw_scale_factor_dict:
+            most_common_len, _ = max(raw_scale_factor_dict.items(), key=lambda item: (item[1], item[0]))
+            effective_fragment_len_max = int(most_common_len)
+        else:
+            effective_fragment_len_max = (
+                int(df['fragment_length'].max()) if not df.empty else fragment_len_min
+            )
+    effective_fragment_len_max = max(fragment_len_min, effective_fragment_len_max)
 
-    df['fragment_length'] = df['fragment_length'].clip(upper=fragment_len_max)
-    # For each position, sum counts for all rows with length=fragment_len_max
+    # Apply an explicit upper bound only as a filter. Do not collapse longer
+    # fragments into the terminal row.
+    if fragment_len_max is not None:
+        df = df[df['fragment_length'] <= effective_fragment_len_max].copy()
+
+
+    # Aggregate any duplicate rows that may arise after rounding/filtering.
     df = df.groupby(['chrom', 'pos', 'fragment_length'], as_index=False).sum()
-
 
     # pivot to get matrix and fill gaps with 0
     mat = df.pivot(index='fragment_length', columns='pos', values='count').fillna(0)
 
     # ensure every fragment_length is represented
-    all_lengths = np.arange(fragment_len_min, fragment_len_max + 1)
+    all_lengths = np.arange(fragment_len_min, effective_fragment_len_max + 1)
     mat = mat.reindex(all_lengths, fill_value=0)
     mat.index.name = 'fragment_length'
 
@@ -868,10 +878,25 @@ def get_count_matrix(counts_gz: str,
     raw_total_counts.name = 'total_counts'
     raw_total_counts.index.name = 'fragment_length'
 
-    # Optional scaling of counts by fragment length-specific scale factors
+    # Optional scaling of counts by fragment length-specific scale factors.
+    # Some fragment lengths may be absent from the input data but introduced as
+    # all-zero rows by the dense reindexing above. Those synthetic rows do not
+    # necessarily have embedded scale factors, so only require scale factors for
+    # rows that actually contain signal.
     if scale_factor_dict is not None:
         row_names = mat.index.tolist()
-        scale_factor = [scale_factor_dict[frag_len] for frag_len in row_names]
+        missing_with_signal = [
+            frag_len for frag_len in row_names
+            if frag_len not in scale_factor_dict and raw_total_counts.loc[frag_len] > 0
+        ]
+        if missing_with_signal:
+            raise KeyError(
+                "Missing scale factors for fragment lengths with nonzero counts: "
+                + ", ".join(str(frag_len) for frag_len in missing_with_signal[:10])
+                + ("..." if len(missing_with_signal) > 10 else "")
+            )
+
+        scale_factor = [scale_factor_dict.get(frag_len, 1.0) for frag_len in row_names]
         mat = mat.div(scale_factor, axis=0)
 
     # Optional smoothing
@@ -1607,30 +1632,33 @@ def get_scale_factors(footprints_tsv_path, by_fragment_length=False):
                             except (ValueError, TypeError) as e:
                                 raise ValueError(f"Invalid scale factor entry {key}: {value} - {e}")
 
-                        # Apply normalization logic if by_fragment_length=False
+                        # Apply normalization logic if by_fragment_length=False.
+                        # Treat the maximum scale factor as the most common fragment
+                        # length. All lengths below that point get the mean of
+                        # the shorter-length group; that length and all longer
+                        # lengths get the maximum value.
                         if not by_fragment_length and converted_factors:
                             try:
-                                import numpy as np
+                                most_common_len, max_value = max(
+                                    converted_factors.items(),
+                                    key=lambda item: (item[1], item[0]),
+                                )
+                                shorter_values = [
+                                    value for frag_len, value in converted_factors.items()
+                                    if frag_len < most_common_len
+                                ]
+                                short_mean = (
+                                    sum(shorter_values) / len(shorter_values)
+                                    if shorter_values else max_value
+                                )
 
-                                # Get the most common fragment length
-                                common_len = most_common_fragment_length(footprints_tsv_path)
+                                for frag_len in list(converted_factors):
+                                    if frag_len < most_common_len:
+                                        converted_factors[frag_len] = short_mean
+                                    else:
+                                        converted_factors[frag_len] = max_value
 
-                                if common_len is not None and common_len in converted_factors:
-                                    # Calculate median for fragment lengths below common length
-                                    below_common = [v for k, v in converted_factors.items() if k < common_len]
-
-                                    if below_common:  # Only apply normalization if there are values below common length
-                                        median = np.median(below_common)
-
-                                        # Apply normalization logic
-                                        for k in converted_factors:
-                                            if k < common_len:
-                                                converted_factors[k] = median
-                                            elif k > common_len:  # Note: > not >=
-                                                converted_factors[k] = converted_factors[common_len]
-                                        # k == common_len keeps its original value
-
-                            except Exception as e:
+                            except Exception:
                                 # If normalization fails, fall back to original values
                                 # This ensures backward compatibility
                                 pass

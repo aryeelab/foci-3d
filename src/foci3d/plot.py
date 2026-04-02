@@ -48,7 +48,12 @@ def build_parser(add_help: bool = True, prog: str | None = None) -> argparse.Arg
         help="Optional detected-footprints TSV file to overlay on the heatmap",
     )
     parser.add_argument("--fragment-len-min", type=int, default=25, help="Minimum fragment length to plot")
-    parser.add_argument("--fragment-len-max", type=int, default=150, help="Maximum fragment length to plot")
+    parser.add_argument(
+        "--fragment-len-max",
+        type=int,
+        default=None,
+        help="Maximum fragment length to plot. If omitted, plot up to the most common fragment length",
+    )
     parser.add_argument(
         "--scale",
         choices=["yes", "no", "by_fragment_length"],
