@@ -26,6 +26,11 @@ class TestCliHelp(unittest.TestCase):
         self.assertIn("detect", result.stdout)
         self.assertIn("plot", result.stdout)
 
+    def test_top_level_version(self):
+        result = self.run_cli("--version")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "foci-3d 0.1.0")
+
     def test_parse_help(self):
         result = self.run_cli("parse", "--help")
         self.assertEqual(result.returncode, 0)

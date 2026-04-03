@@ -41,6 +41,11 @@ def main(argv: list[str] | None = None) -> int:
         print("  plot    Render a footprint heatmap image from counts data")
         return 0
 
+    if argv[0].startswith("-"):
+        parser = build_parser()
+        parser.parse_args(argv)
+        return 0
+
     command = argv[0]
     if command not in COMMANDS:
         parser = build_parser()
