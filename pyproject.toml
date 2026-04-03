@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "foci-3d"
-version = "0.1.0"
+version = "0.2.0"
 description = "FOCI-3D tools for Micro-C transcription factor footprint analysis"
 readme = "README.md"
 license = "MIT"

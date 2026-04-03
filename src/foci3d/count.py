@@ -718,7 +718,7 @@ Performance:
     parser.add_argument(
         "--version",
         action="version",
-        version="foci-3d count 0.1.0"
+        version="foci-3d count 0.2.0"
     )
 
     return parser

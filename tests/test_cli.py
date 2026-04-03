@@ -29,7 +29,7 @@ class TestCliHelp(unittest.TestCase):
     def test_top_level_version(self):
         result = self.run_cli("--version")
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "foci-3d 0.1.0")
+        self.assertEqual(result.stdout.strip(), "foci-3d 0.2.0")
 
     def test_parse_help(self):
         result = self.run_cli("parse", "--help")
@@ -71,4 +71,4 @@ class TestCliHelp(unittest.TestCase):
             timeout=60,
         )
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "0.1.0")
+        self.assertEqual(result.stdout.strip(), "0.2.0")
