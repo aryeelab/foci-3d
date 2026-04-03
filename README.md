@@ -141,30 +141,6 @@ Important points:
 
 The alignments from the same pair (i.e. those with the same READ ID) need to appear next to each other. Samtools name sorting achieves this, as does output directly from bwa (without coordinate sorting).
 
-## Development
-
-For development work from a local checkout and set up a conda environment:
-
-```bash
-conda env create -f environment.yml
-conda activate foci-3d
-```
-
-### For local development and testing use pip
-
-```bash
-pip install -e .
-python tests/run_tests.py
-```
-
-## Build The Conda Package
-
-The repository includes a Conda recipe in `conda-recipe/`.
-
-```bash
-conda build conda-recipe
-```
-
 ## Advanced Manual BAM-to-pairs Workflow
 
 If you want to run the underlying tools manually, the equivalent workflow is:
@@ -179,3 +155,17 @@ pairtools dedup -o test.pairs
 ```
 
 The development repository lives at [aryeelab/foci-3d](https://github.com/aryeelab/foci-3d).
+
+## Development
+
+For development work clone the repository and set up a conda environment:
+
+```bash
+git clone https://github.com/aryeelab/foci-3d.git
+cd foci-3d
+conda env create -f environment.yml # This will create the foci-3d env
+conda activate foci-3d
+pip install -e .
+python tests/run_tests.py
+foci-3d -h
+```
