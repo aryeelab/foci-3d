@@ -74,6 +74,12 @@ def build_parser(add_help: bool = True, prog: str | None = None) -> argparse.Arg
     )
     parser.add_argument("--sigma", type=float, default=10.0, help="Gaussian smoothing sigma")
     parser.add_argument(
+        "--scale-max",
+        action="append",
+        type=float,
+        help="Heatmap color scale maximum. Repeat once to share across tracks or once per --input",
+    )
+    parser.add_argument(
         "--xtick-spacing",
         type=int,
         default=None,
@@ -126,6 +132,8 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
 
     if args.track_title and len(args.track_title) != len(args.input):
         parser.error("--track-title must be provided exactly once per --input")
+    if args.scale_max and len(args.scale_max) not in {1, len(args.input)}:
+        parser.error("--scale-max must be provided once or exactly once per --input")
 
     chrom, start, end = parse_region(args.region)
 
@@ -175,6 +183,7 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
         figure = plot_count_matrix(
             matrices[0],
             title=track_titles[0],
+            vmax=args.scale_max[0] if args.scale_max else None,
             min_frag_length=args.fragment_len_min,
             max_frag_length=args.fragment_len_max,
             blobs=blobs,
@@ -189,6 +198,7 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
             matrices,
             track_titles=track_titles,
             title=args.title or f"{chrom}:{start:,}-{end:,}",
+            vmax=args.scale_max,
             min_frag_length=args.fragment_len_min,
             max_frag_length=args.fragment_len_max,
             blobs=blobs,

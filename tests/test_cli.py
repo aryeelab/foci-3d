@@ -48,6 +48,7 @@ class TestCliHelp(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("Render a footprint heatmap image", result.stdout)
         self.assertIn("--track-title", result.stdout)
+        self.assertIn("--scale-max", result.stdout)
         self.assertIn("--gene-track", result.stdout)
         self.assertIn("--gene-format", result.stdout)
         self.assertIn("--gene-annotation-mode", result.stdout)

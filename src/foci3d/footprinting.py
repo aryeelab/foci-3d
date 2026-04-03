@@ -1389,6 +1389,33 @@ def _draw_gene_annotation_track(ax, gene_track, start_bp, end_bp, xtick_position
     ax.set_xlabel("Position (bp)")
 
 
+def _default_vmax(mat_plot):
+    mask_short = mat_plot.index < 80
+    data_for_vmax = mat_plot.loc[mask_short] if mask_short.any() else mat_plot
+    return np.percentile(data_for_vmax.values.flatten(), 98)
+
+
+def _resolve_vmax_values(mats_plot, vmax):
+    num_heatmaps = len(mats_plot)
+    if num_heatmaps == 0:
+        raise ValueError("At least one matrix is required")
+
+    if vmax is None:
+        auto_vmax_values = [_default_vmax(mat_plot) for mat_plot in mats_plot]
+        shared_vmax = max(auto_vmax_values)
+        return [shared_vmax] * num_heatmaps
+
+    if np.isscalar(vmax):
+        return [float(vmax)] * num_heatmaps
+
+    vmax_values = list(vmax)
+    if len(vmax_values) == 1:
+        return [float(vmax_values[0])] * num_heatmaps
+    if len(vmax_values) != num_heatmaps:
+        raise ValueError("When provided as a sequence, vmax must match the number of matrices")
+    return [float(value) for value in vmax_values]
+
+
 def plot_count_matrix(
     mat,
     title='',
@@ -1420,7 +1447,7 @@ def plot_count_matrix(
     title : str
         Overall plot title.
     vmin, vmax : scalar, optional
-        Color scale limits (default=0, 98th percentile among rows <80).
+        Color scale limits (default=0 and the auto-selected scale maximum).
     named_positions : dict[int->str], optional
         Genome positions to annotate just below the heatmap.
     min_frag_length, max_frag_length : int, optional
@@ -1462,12 +1489,7 @@ def plot_count_matrix(
 
     # Determine vmin/vmax defaults
     vmin_plot = 0 if vmin is None else vmin
-    if vmax is None:
-        mask_short = mat_plot.index < 80
-        data_for_vmax = mat_plot.loc[mask_short] if mask_short.any() else mat_plot
-        vmax_plot = np.percentile(data_for_vmax.values.flatten(), 98)
-    else:
-        vmax_plot = vmax
+    vmax_plot = _default_vmax(mat_plot) if vmax is None else vmax
 
     # Prepare GridSpec: heatmap + tracks, with separate colorbar column.
     # The footprint panel keeps the requested base height. Additional tracks
@@ -1660,6 +1682,7 @@ def plot_count_matrices(
 
     all_columns = sorted(set().union(*(mat_plot.columns.tolist() for mat_plot in mats_plot)))
     mats_plot = [mat_plot.reindex(columns=all_columns, fill_value=0) for mat_plot in mats_plot]
+    vmax_values = _resolve_vmax_values(mats_plot, vmax)
 
     start_bp, end_bp = mats_plot[0].columns.min(), mats_plot[0].columns.max()
     xtick_spacing_plot = xtick_spacing
@@ -1689,17 +1712,11 @@ def plot_count_matrices(
 
     track_titles = track_titles or [""] * num_heatmaps
     heat_axes = []
-    for i, (mat_plot, track_title) in enumerate(zip(mats_plot, track_titles)):
+    for i, (mat_plot, track_title, vmax_plot) in enumerate(zip(mats_plot, track_titles, vmax_values)):
         ax_heat = fig.add_subplot(gs[i, 0])
         ax_cbar = fig.add_subplot(gs[i, 1])
 
         vmin_plot = 0 if vmin is None else vmin
-        if vmax is None:
-            mask_short = mat_plot.index < 80
-            data_for_vmax = mat_plot.loc[mask_short] if mask_short.any() else mat_plot
-            vmax_plot = np.percentile(data_for_vmax.values.flatten(), 98)
-        else:
-            vmax_plot = vmax
 
         sns.heatmap(
             mat_plot,
