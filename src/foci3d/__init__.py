@@ -8,6 +8,8 @@ from .footprinting import (
     get_scale_factors,
     get_valid_windows,
     plot_count_matrix,
+    plot_count_matrices,
+    read_gene_annotation_track,
     read_footprints_tsv,
 )
 
@@ -19,6 +21,8 @@ __all__ = [
     "get_scale_factors",
     "get_valid_windows",
     "plot_count_matrix",
+    "plot_count_matrices",
+    "read_gene_annotation_track",
     "read_footprints_tsv",
 ]
 

@@ -1,0 +1,15 @@
+chr8	test	gene	23237100	23237920	.	+	.	gene_id "GeneA"; gene_name "GeneA";
+chr8	test	transcript	23237100	23237920	.	+	.	gene_id "GeneA"; transcript_id "GeneA-201"; gene_name "GeneA"; transcript_name "GeneA-201";
+chr8	test	exon	23237100	23237220	.	+	.	gene_id "GeneA"; transcript_id "GeneA-201"; gene_name "GeneA";
+chr8	test	exon	23237400	23237520	.	+	.	gene_id "GeneA"; transcript_id "GeneA-201"; gene_name "GeneA";
+chr8	test	exon	23237700	23237920	.	+	.	gene_id "GeneA"; transcript_id "GeneA-201"; gene_name "GeneA";
+chr8	test	transcript	23237140	23237820	.	+	.	gene_id "GeneA"; transcript_id "GeneA-202"; gene_name "GeneA"; transcript_name "GeneA-202";
+chr8	test	exon	23237140	23237200	.	+	.	gene_id "GeneA"; transcript_id "GeneA-202"; gene_name "GeneA";
+chr8	test	exon	23237600	23237820	.	+	.	gene_id "GeneA"; transcript_id "GeneA-202"; gene_name "GeneA";
+chr8	test	gene	23237650	23237980	.	-	.	gene_id "GeneB"; gene_name "GeneB";
+chr8	test	transcript	23237650	23237980	.	-	.	gene_id "GeneB"; transcript_id "GeneB-201"; gene_name "GeneB"; transcript_name "GeneB-201";
+chr8	test	exon	23237650	23237760	.	-	.	gene_id "GeneB"; transcript_id "GeneB-201"; gene_name "GeneB";
+chr8	test	exon	23237840	23237980	.	-	.	gene_id "GeneB"; transcript_id "GeneB-201"; gene_name "GeneB";
+chr8	test	gene	23237990	23238020	.	+	.	gene_id "GeneC";
+chr8	test	transcript	23237990	23238020	.	+	.	gene_id "GeneC"; transcript_id "GeneC-201";
+chr8	test	exon	23237990	23238020	.	+	.	gene_id "GeneC"; transcript_id "GeneC-201";

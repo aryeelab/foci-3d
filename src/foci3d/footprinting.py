@@ -2,11 +2,15 @@
 import pandas as pd
 import pysam
 import numpy as np
+import gzip
 from scipy.ndimage import gaussian_filter
 import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import defaultdict, Counter
 import matplotlib.gridspec as gridspec
+from matplotlib.patches import Rectangle
+import os
+import re
 
 from skimage.feature import peak_local_max
 from skimage.segmentation import watershed
@@ -944,6 +948,447 @@ def _auto_xtick_spacing(start_bp, end_bp, fig_width_inches):
     return _nice_bp_spacing(raw_spacing)
 
 
+def _open_text_file(path):
+    if str(path).endswith(".gz"):
+        return gzip.open(path, "rt")
+    return open(path, "r")
+
+
+def _infer_gene_annotation_format(path):
+    lower_name = os.path.basename(str(path)).lower()
+    if lower_name.endswith((".gtf", ".gtf.gz")):
+        return "gtf"
+    if lower_name.endswith((".gff3", ".gff3.gz", ".gff", ".gff.gz")):
+        return "gff3"
+    if lower_name.endswith((".bed12", ".bed12.gz")):
+        return "bed12"
+    if lower_name.endswith((".bed", ".bed.gz")):
+        return "bed12"
+    raise ValueError(
+        "Could not infer gene annotation format from file name. "
+        "Please specify --gene-format explicitly."
+    )
+
+
+def _parse_gtf_attributes(attr_text):
+    attributes = {}
+    for part in attr_text.strip().split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        if " " not in part:
+            attributes[part] = ""
+            continue
+        key, value = part.split(" ", 1)
+        attributes[key] = value.strip().strip('"')
+    return attributes
+
+
+def _parse_gff3_attributes(attr_text):
+    attributes = {}
+    for part in attr_text.strip().split(";"):
+        if not part or "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        attributes[key] = value
+    return attributes
+
+
+def _feature_overlap(start, end, region_start, region_end):
+    return start <= region_end and end >= region_start
+
+
+def _choose_label(attributes, label_field, default_fields):
+    if label_field and attributes.get(label_field):
+        return attributes[label_field]
+    for field in default_fields:
+        if attributes.get(field):
+            return attributes[field]
+    return None
+
+
+def _normalize_exons(exons):
+    normalized = []
+    for exon_start, exon_end in sorted(exons):
+        exon_start = int(exon_start)
+        exon_end = int(exon_end)
+        if exon_end < exon_start:
+            exon_start, exon_end = exon_end, exon_start
+        if normalized and exon_start <= normalized[-1][1] + 1:
+            normalized[-1] = (normalized[-1][0], max(normalized[-1][1], exon_end))
+        else:
+            normalized.append((exon_start, exon_end))
+    return normalized
+
+
+def _build_gene_track_model(chrom, start, end, strand, label, exons, gene_id=None, transcript_id=None):
+    normalized_exons = _normalize_exons(exons or [(start, end)])
+    return {
+        "chrom": chrom,
+        "start": int(start),
+        "end": int(end),
+        "strand": strand if strand in {"+", "-"} else ".",
+        "label": label or transcript_id or gene_id or "",
+        "exons": normalized_exons,
+        "gene_id": gene_id,
+        "transcript_id": transcript_id,
+    }
+
+
+def _read_gtf_or_gff3_gene_track(path, chrom, region_start, region_end, annotation_format, annotation_mode, label_field):
+    genes = {}
+    transcripts = {}
+
+    with _open_text_file(path) as handle:
+        for raw_line in handle:
+            if not raw_line or raw_line.startswith("#"):
+                continue
+            fields = raw_line.rstrip("\n").split("\t")
+            if len(fields) != 9:
+                continue
+            rec_chrom, _, feature_type, start, end, _, strand, _, attr_text = fields
+            if rec_chrom != chrom:
+                continue
+            start = int(start)
+            end = int(end)
+            if not _feature_overlap(start, end, region_start, region_end):
+                continue
+
+            if annotation_format == "gtf":
+                attributes = _parse_gtf_attributes(attr_text)
+                gene_id = attributes.get("gene_id")
+                transcript_id = attributes.get("transcript_id")
+                gene_label = _choose_label(attributes, label_field, ["gene_name", "gene_id"])
+                transcript_label = _choose_label(attributes, label_field, ["transcript_name", "gene_name", "transcript_id", "gene_id"])
+                parent_ids = [transcript_id] if transcript_id else []
+            else:
+                attributes = _parse_gff3_attributes(attr_text)
+                feature_id = attributes.get("ID")
+                parent_ids = [parent for parent in attributes.get("Parent", "").split(",") if parent]
+                gene_id = attributes.get("gene_id") or attributes.get("gene") or attributes.get("gene_name")
+                transcript_id = attributes.get("transcript_id") or feature_id
+                gene_label = _choose_label(attributes, label_field, ["gene_name", "Name", "gene_id", "ID"])
+                transcript_label = _choose_label(attributes, label_field, ["transcript_name", "Name", "transcript_id", "ID"])
+
+                if feature_type == "gene" and feature_id:
+                    genes[feature_id] = {
+                        "gene_id": feature_id,
+                        "label": gene_label or feature_id,
+                        "chrom": rec_chrom,
+                        "start": start,
+                        "end": end,
+                        "strand": strand,
+                    }
+                    continue
+
+            if feature_type in {"transcript", "mRNA", "mrna"}:
+                if annotation_format == "gff3" and parent_ids:
+                    parent_gene = parent_ids[0]
+                    gene_info = genes.get(parent_gene, {})
+                    gene_id = gene_id or parent_gene
+                    gene_label = gene_label or gene_info.get("label")
+
+                if not transcript_id:
+                    continue
+                transcripts.setdefault(
+                    transcript_id,
+                    {
+                        "chrom": rec_chrom,
+                        "start": start,
+                        "end": end,
+                        "strand": strand,
+                        "gene_id": gene_id,
+                        "label": transcript_label or gene_label or transcript_id,
+                        "gene_label": gene_label or gene_id or transcript_id,
+                        "exons": [],
+                    },
+                )
+                transcripts[transcript_id]["start"] = min(transcripts[transcript_id]["start"], start)
+                transcripts[transcript_id]["end"] = max(transcripts[transcript_id]["end"], end)
+                if transcripts[transcript_id]["gene_id"] is None:
+                    transcripts[transcript_id]["gene_id"] = gene_id
+                if not transcripts[transcript_id]["gene_label"]:
+                    transcripts[transcript_id]["gene_label"] = gene_label or gene_id or transcript_id
+                if not transcripts[transcript_id]["label"]:
+                    transcripts[transcript_id]["label"] = transcript_label or gene_label or transcript_id
+                continue
+
+            if feature_type != "exon":
+                continue
+
+            target_transcript_ids = parent_ids
+            if annotation_format == "gtf" and transcript_id:
+                target_transcript_ids = [transcript_id]
+            if not target_transcript_ids:
+                continue
+
+            for target_transcript_id in target_transcript_ids:
+                transcript = transcripts.setdefault(
+                    target_transcript_id,
+                    {
+                        "chrom": rec_chrom,
+                        "start": start,
+                        "end": end,
+                        "strand": strand,
+                        "gene_id": gene_id,
+                        "label": transcript_label or gene_label or target_transcript_id,
+                        "gene_label": gene_label or gene_id or target_transcript_id,
+                        "exons": [],
+                    },
+                )
+                transcript["start"] = min(transcript["start"], start)
+                transcript["end"] = max(transcript["end"], end)
+                if transcript["gene_id"] is None:
+                    transcript["gene_id"] = gene_id
+                if not transcript["gene_label"]:
+                    transcript["gene_label"] = gene_label or gene_id or target_transcript_id
+                if not transcript["label"]:
+                    transcript["label"] = transcript_label or gene_label or target_transcript_id
+                transcript["exons"].append((start, end))
+
+    models = []
+    if annotation_mode == "transcript":
+        for transcript_id, transcript in transcripts.items():
+            if not transcript["exons"]:
+                transcript["exons"] = [(transcript["start"], transcript["end"])]
+            models.append(
+                _build_gene_track_model(
+                    transcript["chrom"],
+                    transcript["start"],
+                    transcript["end"],
+                    transcript["strand"],
+                    transcript["label"],
+                    transcript["exons"],
+                    gene_id=transcript["gene_id"],
+                    transcript_id=transcript_id,
+                )
+            )
+        return sorted(models, key=lambda model: (model["start"], model["end"], model["label"]))
+
+    transcripts_by_gene = defaultdict(list)
+    for transcript_id, transcript in transcripts.items():
+        gene_key = transcript["gene_id"] or transcript["gene_label"] or transcript_id
+        transcripts_by_gene[gene_key].append((transcript_id, transcript))
+
+    for gene_key, gene_transcripts in transcripts_by_gene.items():
+        best_transcript_id, best_transcript = max(
+            gene_transcripts,
+            key=lambda item: (
+                sum(exon_end - exon_start + 1 for exon_start, exon_end in item[1]["exons"]) if item[1]["exons"] else item[1]["end"] - item[1]["start"] + 1,
+                item[1]["end"] - item[1]["start"] + 1,
+            ),
+        )
+        exons = best_transcript["exons"] or [(best_transcript["start"], best_transcript["end"])]
+        models.append(
+            _build_gene_track_model(
+                best_transcript["chrom"],
+                best_transcript["start"],
+                best_transcript["end"],
+                best_transcript["strand"],
+                best_transcript["gene_label"] or best_transcript["label"] or gene_key,
+                exons,
+                gene_id=best_transcript["gene_id"] or gene_key,
+                transcript_id=best_transcript_id,
+            )
+        )
+
+    return sorted(models, key=lambda model: (model["start"], model["end"], model["label"]))
+
+
+def _read_bed12_gene_track(path, chrom, region_start, region_end, annotation_mode, label_field):
+    models = []
+    with _open_text_file(path) as handle:
+        for raw_line in handle:
+            if not raw_line or raw_line.startswith("#"):
+                continue
+            fields = raw_line.rstrip("\n").split("\t")
+            if len(fields) < 12:
+                continue
+            rec_chrom = fields[0]
+            if rec_chrom != chrom:
+                continue
+            chrom_start = int(fields[1])
+            chrom_end = int(fields[2])
+            if chrom_end < region_start or chrom_start > region_end:
+                continue
+            name = fields[3] if len(fields) > 3 else ""
+            strand = fields[5] if len(fields) > 5 else "."
+            block_count = int(fields[9])
+            block_sizes = [int(value) for value in fields[10].rstrip(",").split(",") if value]
+            block_starts = [int(value) for value in fields[11].rstrip(",").split(",") if value]
+            if block_count != len(block_sizes) or block_count != len(block_starts):
+                continue
+            exons = [
+                (chrom_start + block_start + 1, chrom_start + block_start + block_size)
+                for block_start, block_size in zip(block_starts, block_sizes)
+            ]
+            models.append(
+                _build_gene_track_model(
+                    rec_chrom,
+                    chrom_start + 1,
+                    chrom_end,
+                    strand,
+                    name if not label_field else name,
+                    exons,
+                    gene_id=name,
+                    transcript_id=name,
+                )
+            )
+
+    if annotation_mode == "transcript":
+        return sorted(models, key=lambda model: (model["start"], model["end"], model["label"]))
+
+    models_by_gene = defaultdict(list)
+    for model in models:
+        models_by_gene[model["label"] or model["gene_id"] or model["transcript_id"]].append(model)
+
+    collapsed = []
+    for gene_key, gene_models in models_by_gene.items():
+        best_model = max(
+            gene_models,
+            key=lambda model: (
+                sum(exon_end - exon_start + 1 for exon_start, exon_end in model["exons"]),
+                model["end"] - model["start"] + 1,
+            ),
+        )
+        collapsed.append(best_model)
+    return sorted(collapsed, key=lambda model: (model["start"], model["end"], model["label"]))
+
+
+def read_gene_annotation_track(
+    path,
+    chrom,
+    region_start,
+    region_end,
+    annotation_format="auto",
+    annotation_mode="gene",
+    label_field=None,
+):
+    """
+    Read a gene annotation file and return normalized gene models overlapping a region.
+    """
+    resolved_format = annotation_format
+    if resolved_format == "auto":
+        resolved_format = _infer_gene_annotation_format(path)
+
+    if resolved_format in {"gtf", "gff3"}:
+        return _read_gtf_or_gff3_gene_track(
+            path,
+            chrom=chrom,
+            region_start=region_start,
+            region_end=region_end,
+            annotation_format=resolved_format,
+            annotation_mode=annotation_mode,
+            label_field=label_field,
+        )
+    if resolved_format == "bed12":
+        return _read_bed12_gene_track(
+            path,
+            chrom=chrom,
+            region_start=region_start,
+            region_end=region_end,
+            annotation_mode=annotation_mode,
+            label_field=label_field,
+        )
+    raise ValueError(f"Unsupported gene annotation format: {resolved_format}")
+
+
+def _pack_gene_track_rows(gene_track):
+    rows = []
+    packed_models = []
+    for model in sorted(gene_track, key=lambda item: (item["start"], item["end"], item["label"])):
+        row_index = 0
+        while row_index < len(rows) and model["start"] <= rows[row_index]:
+            row_index += 1
+        if row_index == len(rows):
+            rows.append(model["end"])
+        else:
+            rows[row_index] = model["end"]
+        packed_models.append((row_index, model))
+    return packed_models, max(1, len(rows))
+
+
+def _draw_gene_annotation_track(ax, gene_track, start_bp, end_bp, xtick_positions, xtick_labels):
+    span_bp = end_bp - start_bp + 1
+    packed_models, num_rows = _pack_gene_track_rows(gene_track)
+    exon_half_height = 0.18
+    label_offset = 0.32
+    label_margin = 0.08
+    ax.set_xlim(0, span_bp)
+    ax.set_ylim(num_rows, -label_offset - label_margin)
+    ax.set_ylabel("Genes")
+    ax.set_yticks([])
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    def _draw_strand_arrows(span_start, span_end, y_value, strand, min_span=150):
+        span_length = span_end - span_start + 1
+        if strand not in {"+", "-"} or span_length < min_span:
+            return
+        direction = 1 if strand == "+" else -1
+        arrow_positions = np.arange(span_start + 75, span_end, 150)
+        if strand == "-":
+            arrow_positions = np.arange(span_end - 75, span_start, -150)
+        for arrow_bp in arrow_positions:
+            arrow_x = arrow_bp - start_bp
+            arrow_dx = 18 * direction
+            ax.annotate(
+                "",
+                xy=(arrow_x + arrow_dx, y_value),
+                xytext=(arrow_x, y_value),
+                arrowprops=dict(arrowstyle="-|>", color="black", lw=0.8),
+                zorder=3,
+            )
+
+    for row_index, model in packed_models:
+        y_center = row_index + 0.5
+        clipped_start = max(model["start"], start_bp)
+        clipped_end = min(model["end"], end_bp)
+        if clipped_end < clipped_start:
+            continue
+
+        x_start = clipped_start - start_bp
+        x_end = clipped_end - start_bp + 1
+        ax.plot([x_start, x_end], [y_center, y_center], color="black", linewidth=1.0, zorder=1)
+
+        for exon_start, exon_end in model["exons"]:
+            exon_start = max(exon_start, start_bp)
+            exon_end = min(exon_end, end_bp)
+            if exon_end < exon_start:
+                continue
+            exon_x = exon_start - start_bp
+            exon_width = max(1.0, exon_end - exon_start + 1)
+            ax.add_patch(
+                Rectangle(
+                    (exon_x, y_center - exon_half_height),
+                    exon_width,
+                    2 * exon_half_height,
+                    facecolor="0.7",
+                    edgecolor="black",
+                    linewidth=0.5,
+                    zorder=2,
+                )
+            )
+            _draw_strand_arrows(exon_start, exon_end, y_center, model["strand"])
+
+        _draw_strand_arrows(clipped_start, clipped_end, y_center, model["strand"])
+
+        label_x = x_start
+        ax.text(
+            label_x,
+            y_center - label_offset,
+            model["label"],
+            ha="left",
+            va="bottom",
+            fontsize=8,
+            clip_on=True,
+        )
+
+    ax.set_xticks(xtick_positions)
+    ax.set_xticklabels(xtick_labels, rotation=0, ha="center")
+    ax.set_xlabel("Position (bp)")
+
+
 def plot_count_matrix(
     mat,
     title='',
@@ -953,11 +1398,13 @@ def plot_count_matrix(
     min_frag_length=None,
     max_frag_length=None,
     tracks=None,            # dict[label -> pd.Series]
+    gene_track=None,        # list[dict]
     blobs=None,             # DataFrame of blob data
     blob_marker='o',        # Marker style for blobs
     blob_color='white',     # Color for blob markers
     blob_size=5,            # Size of blob markers
     xtick_spacing=None,
+    gene_height=1.0,
     figsize=(10, 4),
     aspect='auto',
     return_fig=False
@@ -980,6 +1427,9 @@ def plot_count_matrix(
         Fragment-length clipping.
     tracks : dict[str, pd.Series], optional
         Additional continuous signals: {label: series indexed by columns of `mat`}.
+    gene_track : list[dict], optional
+        Gene models to render beneath the heatmap. Each model should define
+        chrom, start, end, strand, label, and exons.
     blobs : pandas.DataFrame, optional
         DataFrame of blob data as returned by detect_blobs_matrix or detect_footprints function.
         Should contain 'fragment_length' and 'position' columns.
@@ -992,6 +1442,9 @@ def plot_count_matrix(
     xtick_spacing : int or None, optional
         Spacing between x-axis ticks in base pairs. If None, choose a readable
         interval automatically from the genomic span and figure width.
+    gene_height : float, optional
+        Relative subplot height for the gene annotation track. The overall
+        figure height expands to preserve the footprint panel height.
     figsize : tuple
         Figure size in inches.
     aspect : str or float
@@ -1016,14 +1469,23 @@ def plot_count_matrix(
     else:
         vmax_plot = vmax
 
-    # Prepare GridSpec: heatmap + tracks, with separate colorbar column
+    # Prepare GridSpec: heatmap + tracks, with separate colorbar column.
+    # The footprint panel keeps the requested base height. Additional tracks
+    # expand the overall figure height rather than compressing the heatmap.
     n_tracks = len(tracks) if tracks else 0
-    fig = plt.figure(figsize=figsize)
+    has_gene_track = bool(gene_track)
+    total_track_panels = n_tracks + (1 if has_gene_track else 0)
+    total_height_units = 3 + n_tracks + (float(gene_height) if has_gene_track else 0)
+    effective_fig_height = float(figsize[1]) * (total_height_units / 3.0)
+    fig = plt.figure(figsize=(figsize[0], effective_fig_height))
     # Increase hspace when named_positions are present to avoid overlap with tracks
-    hspace_value = 0.6 if (named_positions and n_tracks > 0) else 0.3
+    hspace_value = 0.6 if (named_positions and total_track_panels > 0) else 0.3
+    height_ratios = [3] + [1] * n_tracks
+    if has_gene_track:
+        height_ratios.append(max(0.5, float(gene_height)))
     gs = gridspec.GridSpec(
-        1 + n_tracks, 2,
-        height_ratios=[3] + [1]*n_tracks,
+        1 + total_track_panels, 2,
+        height_ratios=height_ratios,
         width_ratios=[1, 0.05],
         wspace=0.03,
         hspace=hspace_value
@@ -1118,6 +1580,7 @@ def plot_count_matrix(
     xtick_labels = [f"{v:,}" for v in xtick_values]
 
     # Draw each additional track below if provided
+    track_axes = []
     if tracks:
         for i, (label, series) in enumerate(tracks.items(), start=1):
             ax_tr = fig.add_subplot(gs[i, 0])
@@ -1130,13 +1593,23 @@ def plot_count_matrix(
                 align='edge'
             )
             ax_tr.set_ylabel(label)
-            # bottom track: set x-ticks and annotate if needed
-            if i == n_tracks:
-                ax_tr.set_xticks(xtick_positions)
-                ax_tr.set_xticklabels(xtick_labels, rotation=0, ha='center')
-                ax_tr.set_xlabel('Position (bp)')
-            else:
-                ax_tr.set_xticks([])
+            track_axes.append(ax_tr)
+
+    if has_gene_track:
+        gene_ax = fig.add_subplot(gs[1 + n_tracks, 0])
+        _draw_gene_annotation_track(gene_ax, gene_track, start_bp, end_bp, xtick_positions, xtick_labels)
+        track_axes.append(gene_ax)
+
+    if track_axes:
+        for ax in track_axes[:-1]:
+            ax.set_xticks([])
+            ax.set_xlabel("")
+            ax.xaxis.set_tick_params(bottom=False, labelbottom=False)
+        bottom_ax = track_axes[-1]
+        bottom_ax.set_xticks(xtick_positions)
+        bottom_ax.set_xticklabels(xtick_labels, rotation=0, ha='center')
+        bottom_ax.set_xlabel('Position (bp)')
+        bottom_ax.xaxis.set_tick_params(bottom=True, labelbottom=True)
     else:
         # No tracks provided: show x-axis on the heatmap itself
         ax_heat.set_xticks(xtick_positions)
@@ -1148,6 +1621,146 @@ def plot_count_matrix(
         return fig
     else:
         plt.show()
+
+
+def plot_count_matrices(
+    mats,
+    track_titles=None,
+    title='',
+    vmin=None,
+    vmax=None,
+    min_frag_length=None,
+    max_frag_length=None,
+    blobs=None,
+    blob_marker='o',
+    blob_color='white',
+    blob_size=5,
+    xtick_spacing=None,
+    gene_track=None,
+    gene_height=2.0,
+    figsize=(10, 4),
+    aspect='auto',
+    return_fig=False,
+):
+    """
+    Plot multiple footprint heatmaps stacked vertically with a shared genomic x-axis
+    and an optional single gene annotation track at the bottom.
+    """
+    if not mats:
+        raise ValueError("At least one matrix is required")
+
+    mats_plot = []
+    for mat in mats:
+        mat_plot = mat.copy()
+        if min_frag_length is not None:
+            mat_plot = mat_plot[mat_plot.index >= min_frag_length]
+        if max_frag_length is not None:
+            mat_plot = mat_plot[mat_plot.index <= max_frag_length]
+        mats_plot.append(mat_plot)
+
+    all_columns = sorted(set().union(*(mat_plot.columns.tolist() for mat_plot in mats_plot)))
+    mats_plot = [mat_plot.reindex(columns=all_columns, fill_value=0) for mat_plot in mats_plot]
+
+    start_bp, end_bp = mats_plot[0].columns.min(), mats_plot[0].columns.max()
+    xtick_spacing_plot = xtick_spacing
+    if xtick_spacing_plot is None:
+        xtick_spacing_plot = _auto_xtick_spacing(start_bp, end_bp, figsize[0])
+    first_tick = int(np.ceil(start_bp / xtick_spacing_plot) * xtick_spacing_plot)
+    xtick_values = np.arange(first_tick, end_bp + 1, xtick_spacing_plot)
+    xtick_positions = xtick_values - start_bp
+    xtick_labels = [f"{v:,}" for v in xtick_values]
+
+    num_heatmaps = len(mats_plot)
+    has_gene_track = bool(gene_track)
+    total_height_units = 3 * num_heatmaps + (float(gene_height) if has_gene_track else 0)
+    effective_fig_height = float(figsize[1]) * (total_height_units / 3.0)
+    fig = plt.figure(figsize=(figsize[0], effective_fig_height))
+    height_ratios = [3] * num_heatmaps
+    if has_gene_track:
+        height_ratios.append(max(0.5, float(gene_height)))
+    gs = gridspec.GridSpec(
+        num_heatmaps + (1 if has_gene_track else 0),
+        2,
+        height_ratios=height_ratios,
+        width_ratios=[1, 0.05],
+        wspace=0.03,
+        hspace=0.3,
+    )
+
+    track_titles = track_titles or [""] * num_heatmaps
+    heat_axes = []
+    for i, (mat_plot, track_title) in enumerate(zip(mats_plot, track_titles)):
+        ax_heat = fig.add_subplot(gs[i, 0])
+        ax_cbar = fig.add_subplot(gs[i, 1])
+
+        vmin_plot = 0 if vmin is None else vmin
+        if vmax is None:
+            mask_short = mat_plot.index < 80
+            data_for_vmax = mat_plot.loc[mask_short] if mask_short.any() else mat_plot
+            vmax_plot = np.percentile(data_for_vmax.values.flatten(), 98)
+        else:
+            vmax_plot = vmax
+
+        sns.heatmap(
+            mat_plot,
+            cmap='magma',
+            ax=ax_heat,
+            cbar_ax=ax_cbar,
+            vmin=vmin_plot,
+            vmax=vmax_plot,
+            cbar_kws={'label': 'Count'},
+            xticklabels=False,
+            yticklabels=True
+        )
+        ax_heat.set_xticks([])
+        ax_heat.set_xlabel('')
+        ax_heat.xaxis.set_tick_params(bottom=False, labelbottom=False)
+        ax_heat.set_aspect(aspect)
+        ax_heat.set_title(track_title)
+        ax_heat.set_ylabel('Fragment Length')
+
+        if blobs is not None and not blobs.empty:
+            filtered_blobs = blobs.copy()
+            if min_frag_length is not None:
+                filtered_blobs = filtered_blobs[filtered_blobs['fragment_length'] >= min_frag_length]
+            if max_frag_length is not None:
+                filtered_blobs = filtered_blobs[filtered_blobs['fragment_length'] <= max_frag_length]
+            x_coords = []
+            y_coords = []
+            for _, blob in filtered_blobs.iterrows():
+                if blob['position'] in mat_plot.columns and blob['fragment_length'] in mat_plot.index:
+                    x_coord = mat_plot.columns.get_loc(blob['position'])
+                    y_coord = mat_plot.index.get_loc(blob['fragment_length'])
+                    x_coords.append(x_coord + 0.5)
+                    y_coords.append(y_coord + 0.5)
+            if x_coords and y_coords:
+                ax_heat.scatter(x_coords, y_coords, marker=blob_marker, color=blob_color, s=blob_size, zorder=10)
+
+        start_len, end_len = mat_plot.index.min(), mat_plot.index.max()
+        ytick_vals = np.arange(20 * (start_len // 20 + 1), end_len + 1, 20)
+        ytick_pos = ytick_vals - start_len
+        mask_y = (ytick_pos >= 0) & (ytick_pos < mat_plot.shape[0])
+        ax_heat.set_yticks(ytick_pos[mask_y])
+        ax_heat.set_yticklabels(ytick_vals[mask_y])
+        ax_heat.invert_yaxis()
+        heat_axes.append(ax_heat)
+
+    if title:
+        fig.suptitle(title, y=0.995)
+
+    if has_gene_track:
+        gene_ax = fig.add_subplot(gs[num_heatmaps, 0])
+        _draw_gene_annotation_track(gene_ax, gene_track, start_bp, end_bp, xtick_positions, xtick_labels)
+    else:
+        bottom_ax = heat_axes[-1]
+        bottom_ax.set_xticks(xtick_positions)
+        bottom_ax.set_xticklabels(xtick_labels, rotation=0, ha='center')
+        bottom_ax.set_xlabel('Position (bp)')
+        bottom_ax.xaxis.set_tick_params(bottom=True, labelbottom=True)
+
+    if return_fig:
+        return fig
+    plt.show()
 
 
 def get_valid_windows(counts_gz, chromosomes=None, window_overlap_bp=0, window_size=1024, maxgap=1000, max_windows=None):

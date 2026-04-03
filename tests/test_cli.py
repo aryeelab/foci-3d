@@ -47,6 +47,10 @@ class TestCliHelp(unittest.TestCase):
         result = self.run_cli("plot", "--help")
         self.assertEqual(result.returncode, 0)
         self.assertIn("Render a footprint heatmap image", result.stdout)
+        self.assertIn("--track-title", result.stdout)
+        self.assertIn("--gene-track", result.stdout)
+        self.assertIn("--gene-format", result.stdout)
+        self.assertIn("--gene-annotation-mode", result.stdout)
 
     def test_python_import(self):
         result = subprocess.run(
