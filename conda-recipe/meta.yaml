@@ -29,6 +29,7 @@ requirements:
     - matplotlib-base
     - numpy >=1.22,<2.0a0
     - pairtools
+    - pairix
     - pandas
     - psutil
     - pysam

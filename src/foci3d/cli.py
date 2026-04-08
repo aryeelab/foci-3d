@@ -35,8 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in {"-h", "--help"}:
         parser = build_parser()
         parser.print_help()
-        print("\nCommands:\n  parse   Convert BAM input to final .pairs output")
-        print("  count   Convert .pairs input to tabix-indexed counts")
+        print("\nCommands:\n  parse   Convert BAM input to final indexed .pairs.gz output")
+        print("  count   Convert .pairs or .pairs.gz input to tabix-indexed counts")
         print("  detect  Detect footprints from counts matrices")
         print("  plot    Render a footprint heatmap image from counts data")
         return 0

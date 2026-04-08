@@ -34,7 +34,7 @@ class TestCliHelp(unittest.TestCase):
     def test_parse_help(self):
         result = self.run_cli("parse", "--help")
         self.assertEqual(result.returncode, 0)
-        self.assertIn("Convert a BAM into a final deduplicated .pairs file", result.stdout)
+        self.assertIn("Convert a BAM into a final deduplicated, bgzipped, Pairix-indexed .pairs.gz file", result.stdout)
         self.assertIn("--min-mapq", result.stdout)
         self.assertIn("--chroms-path", result.stdout)
 
@@ -52,6 +52,8 @@ class TestCliHelp(unittest.TestCase):
         result = self.run_cli("plot", "--help")
         self.assertEqual(result.returncode, 0)
         self.assertIn("Render a footprint heatmap image", result.stdout)
+        self.assertIn("--pairs", result.stdout)
+        self.assertIn("--partner-region", result.stdout)
         self.assertIn("--track-title", result.stdout)
         self.assertIn("--scale-max", result.stdout)
         self.assertIn("--gene-track", result.stdout)

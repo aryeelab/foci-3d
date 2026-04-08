@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 
+import gzip
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from helpers import REPO_ROOT, subprocess_env
+from helpers import REPO_ROOT, require_external_tools, subprocess_env
 from foci3d.footprinting import (
     _default_vmax,
     get_count_matrix,
+    get_partner_filtered_count_matrix,
     plot_count_matrix,
     plot_count_matrices,
     read_gene_annotation_track,
@@ -19,30 +22,28 @@ from foci3d.footprinting import (
 
 
 class TestPlotCommand(unittest.TestCase):
+    def run_cli(self, *args, timeout=300):
+        return subprocess.run(
+            [sys.executable, "-m", "foci3d.cli", "plot", *map(str, args)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=subprocess_env(),
+        )
+
     def test_plot_creates_image(self):
         counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "plot.png"
-            cmd = [
-                sys.executable,
-                "-m",
-                "foci3d.cli",
-                "plot",
+            result = self.run_cli(
                 "-i",
-                str(counts_file),
+                counts_file,
                 "-o",
-                str(output_file),
+                output_file,
                 "-r",
                 "chr8:23237000-23238000",
                 "--sigma",
                 "2",
-            ]
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=300,
-                env=subprocess_env(),
             )
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertTrue(output_file.exists())
@@ -53,28 +54,17 @@ class TestPlotCommand(unittest.TestCase):
         gene_track = REPO_ROOT / "tests" / "data" / "test_genes.gtf"
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "plot_with_genes.png"
-            cmd = [
-                sys.executable,
-                "-m",
-                "foci3d.cli",
-                "plot",
+            result = self.run_cli(
                 "-i",
-                str(counts_file),
+                counts_file,
                 "-o",
-                str(output_file),
+                output_file,
                 "-r",
                 "chr8:23237000-23238000",
                 "--sigma",
                 "2",
                 "--gene-track",
-                str(gene_track),
-            ]
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=300,
-                env=subprocess_env(),
+                gene_track,
             )
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertTrue(output_file.exists())
@@ -85,34 +75,23 @@ class TestPlotCommand(unittest.TestCase):
         gene_track = REPO_ROOT / "tests" / "data" / "test_genes.gtf"
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "multi_plot.png"
-            cmd = [
-                sys.executable,
-                "-m",
-                "foci3d.cli",
-                "plot",
+            result = self.run_cli(
                 "-i",
-                str(counts_file),
+                counts_file,
                 "-i",
-                str(counts_file),
+                counts_file,
                 "--track-title",
                 "Track A",
                 "--track-title",
                 "Track B",
                 "-o",
-                str(output_file),
+                output_file,
                 "-r",
                 "chr8:23237000-23238000",
                 "--sigma",
                 "2",
                 "--gene-track",
-                str(gene_track),
-            ]
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=300,
-                env=subprocess_env(),
+                gene_track,
             )
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertTrue(output_file.exists())
@@ -122,15 +101,11 @@ class TestPlotCommand(unittest.TestCase):
         counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "multi_plot.png"
-            cmd = [
-                sys.executable,
-                "-m",
-                "foci3d.cli",
-                "plot",
+            result = self.run_cli(
                 "-i",
-                str(counts_file),
+                counts_file,
                 "-i",
-                str(counts_file),
+                counts_file,
                 "--scale-max",
                 "1.0",
                 "--scale-max",
@@ -138,21 +113,205 @@ class TestPlotCommand(unittest.TestCase):
                 "--scale-max",
                 "3.0",
                 "-o",
-                str(output_file),
+                output_file,
                 "-r",
                 "chr8:23237000-23238000",
                 "--sigma",
                 "2",
-            ]
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=300,
-                env=subprocess_env(),
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("--scale-max must be provided once or exactly once per --input", result.stderr)
+
+    def test_plot_partner_region_requires_pairs(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "partner_plot.png"
+            result = self.run_cli(
+                "-i",
+                counts_file,
+                "-o",
+                output_file,
+                "-r",
+                "chr8:23237000-23238000",
+                "--partner-region",
+                "chr8:23237000-23238000",
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("--partner-region requires --pairs", result.stderr)
+
+    def test_plot_partner_region_requires_pairs_per_input(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "partner_plot.png"
+            result = self.run_cli(
+                "-i",
+                counts_file,
+                "-i",
+                counts_file,
+                "--pairs",
+                temp_dir + "/sample.pairs.gz",
+                "-o",
+                output_file,
+                "-r",
+                "chr8:23237000-23238000",
+                "--partner-region",
+                "chr8:23237000-23238000",
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("--pairs must be provided exactly once per --input when --partner-region is used", result.stderr)
+
+    def test_plot_partner_region_rejects_non_pairs_gz(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "partner_plot.png"
+            pairs_path = Path(temp_dir) / "sample.pairs"
+            pairs_path.write_text("#columns: readID chrom1 pos1 chrom2 pos2 strand1 strand2 pair_type pos51 pos52 pos31 pos32\n")
+            result = self.run_cli(
+                "-i",
+                counts_file,
+                "--pairs",
+                pairs_path,
+                "-o",
+                output_file,
+                "-r",
+                "chr8:23237000-23238000",
+                "--partner-region",
+                "chr8:23237000-23238000",
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("--partner-region requires each --pairs file to end with .pairs.gz", result.stderr)
+
+    def test_plot_partner_region_missing_index_fails(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "partner_plot.png"
+            pairs_path = Path(temp_dir) / "sample.pairs.gz"
+            with gzip.open(pairs_path, "wt") as handle:
+                handle.write("#columns: readID chrom1 pos1 chrom2 pos2 strand1 strand2 pair_type pos51 pos52 pos31 pos32\n")
+            result = self.run_cli(
+                "-i",
+                counts_file,
+                "--pairs",
+                pairs_path,
+                "-o",
+                output_file,
+                "-r",
+                "chr8:23237000-23238000",
+                "--partner-region",
+                "chr8:23237000-23238000",
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                f"--partner-region requires an indexed pairs file. For '{pairs_path}', expected '{pairs_path}.px2'. "
+                "Create it with bgzip + pairix, or generate it directly with `foci-3d parse`.",
+                result.stderr,
+            )
+
+    def test_plot_partner_region_creates_image(self):
+        missing = require_external_tools("bgzip", "pairix")
+        if missing:
+            self.skipTest(f"Required external tools are not available: {', '.join(missing)}")
+
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        pairs_path = REPO_ROOT / "tests" / "data" / "mesc_microc_test.pairs.gz"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "partner_plot.png"
+            result = self.run_cli(
+                "-i",
+                counts_file,
+                "--pairs",
+                pairs_path,
+                "-o",
+                output_file,
+                "-r",
+                "chr8:23237000-23238000",
+                "--partner-region",
+                "chr8:23237000-23238000",
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertTrue(output_file.exists())
+            self.assertGreater(output_file.stat().st_size, 0)
+
+
+class TestPartnerFilteredMatrix(unittest.TestCase):
+    def test_partner_filtered_matrix_counts_each_qualifying_anchor(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        fake_pairs = REPO_ROOT / "tests" / "data" / "fake.pairs.gz"
+        column_indices = {
+            "chrom1": 1,
+            "pos1": 2,
+            "chrom2": 3,
+            "pos2": 4,
+            "pos51": 8,
+            "pos52": 9,
+            "pos31": 10,
+            "pos32": 11,
+        }
+        records = [
+            "read1\tchr8\t23237010\tchr8\t23237030\t+\t+\tUU\t23237000\t23237020\t23237020\t23237040",
+        ]
+
+        with mock.patch("foci3d.footprinting._read_pairs_columns", return_value=column_indices), mock.patch(
+            "foci3d.footprinting._query_pairix_records",
+            return_value=records,
+        ):
+            matrix, raw_counts = get_partner_filtered_count_matrix(
+                counts_gz=str(counts_file),
+                pairs_gz=str(fake_pairs),
+                chrom="chr8",
+                window_start=23237000,
+                window_end=23237050,
+                partner_chrom="chr8",
+                partner_start=23237000,
+                partner_end=23237050,
+                fragment_len_min=10,
+                fragment_len_max=30,
+                scale="no",
+                sigma=0,
+            )
+
+        self.assertEqual(raw_counts.loc[21], 2)
+        self.assertEqual(matrix.loc[21, 23237010], 1)
+        self.assertEqual(matrix.loc[21, 23237030], 1)
+
+    def test_partner_filtered_matrix_uses_midpoint_based_filtering(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        fake_pairs = REPO_ROOT / "tests" / "data" / "fake.pairs.gz"
+        column_indices = {
+            "chrom1": 1,
+            "pos1": 2,
+            "chrom2": 3,
+            "pos2": 4,
+            "pos51": 8,
+            "pos52": 9,
+            "pos31": 10,
+            "pos32": 11,
+        }
+        records = [
+            "read1\tchr8\t23237000\tchr8\t23237040\t+\t+\tUU\t23236990\t23237035\t23237010\t23237055",
+        ]
+
+        with mock.patch("foci3d.footprinting._read_pairs_columns", return_value=column_indices), mock.patch(
+            "foci3d.footprinting._query_pairix_records",
+            return_value=records,
+        ):
+            matrix, raw_counts = get_partner_filtered_count_matrix(
+                counts_gz=str(counts_file),
+                pairs_gz=str(fake_pairs),
+                chrom="chr8",
+                window_start=23237000,
+                window_end=23237005,
+                partner_chrom="chr8",
+                partner_start=23237040,
+                partner_end=23237045,
+                fragment_len_min=10,
+                fragment_len_max=30,
+                scale="no",
+                sigma=0,
+            )
+
+        self.assertEqual(raw_counts.loc[21], 1)
+        self.assertEqual(matrix.loc[21, 23237000], 1)
 
 
 class TestGeneTrackHelpers(unittest.TestCase):

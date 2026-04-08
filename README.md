@@ -2,9 +2,9 @@
 
 FOCI-3D (Footprinting Of Chromatin Interactions in 3D) is a toolkit for analyzing transcription factor footprints from Micro-C, Region Capture Micro-C (RCMC) and related MNase-based chromosome conformation capture assays. The supported workflow is:
 
-1. Generate a `.pairs` file containing ligation fragment start and end positions from a BAM.
+1. Generate an indexed `.pairs.gz` file containing ligation fragment start and end positions from a BAM.
 2. Compute a fragment midpoint x fragment length 2D histogram of fragment counts
-3. Visualize 2D footprint heatmaps using either the command line or from Python.
+3. Visualize 2D footprint heatmaps using either the command line or from Python, optionally filtering anchors by partner-region.
 
 We're currently developing methodology to detect statistically significant footprints and perform differential testing across conditions. Please reach out if interested in discussing: martin.aryee@ds.dfci.harvard.edu.
 
@@ -15,19 +15,19 @@ We're currently developing methodology to detect statistically significant footp
 conda install -c conda-forge -c bioconda foci-3d
 ```
 
-This installs the Python package together with the external bioinformatics tools required for the core workflow, including `samtools`, `pairtools`, `bgzip` and `tabix`.
+This installs the Python package together with the external bioinformatics tools required for the core workflow, including `samtools`, `pairtools`, `pairix`, `bgzip` and `tabix`.
 
 ## Quickstart
 
 ### 1. Parsing pairs from a BAM
 
-Create a deduplicated `.pairs` file from a BAM:
+Create a deduplicated, bgzipped, Pairix-indexed `.pairs.gz` file from a BAM:
 
 ```bash
-foci-3d parse tests/data/mesc_microc_test.bam -o test.pairs
+foci-3d parse tests/data/mesc_microc_test.bam -o test.pairs.gz
 ```
 
-`foci-3d parse` is a simple wrapper around `pairtools parse` with reasonable defaults for this workflow.
+`foci-3d parse` is a simple wrapper around `pairtools parse` with reasonable defaults for this workflow. It writes `test.pairs.gz` and the matching Pairix index `test.pairs.gz.px2`.
 
 Note: If you do not pass `--chroms-path`, it generates a temporary chrom sizes file from the BAM header automatically.
 
@@ -36,7 +36,7 @@ Note: If you do not pass `--chroms-path`, it generates a temporary chrom sizes f
 Make a 2D histogram where each fragment is represented by (fragment midpoint, fragment length). The matrix is bgzip-compressed and tabix-indexed.
 
 ```bash
-foci-3d count test.pairs -o test.counts.tsv.gz
+foci-3d count test.pairs.gz -o test.counts.tsv.gz
 ```
 
 ### 3. Plot footprints
@@ -65,6 +65,38 @@ foci-3d plot \
 ```
 
 See `foci-3d plot --help` for complete options.
+
+Example: Plot a region while keeping only anchor fragments whose partner fragment midpoint falls in a second interval:
+
+```bash
+foci-3d plot \
+  -i test.counts.tsv.gz \
+  --pairs test.pairs.gz \
+  -o test_partner_filtered.png \
+  -r chr8:23237000-23238000 \
+  --partner-region chr8:23237500-23238500
+```
+
+For multi-track partner-filtered plots, repeat `--pairs` once per `--input`, in the same order:
+
+```bash
+foci-3d plot \
+  -i test-dmso.counts.tsv.gz \
+  -i test-kd.counts.tsv.gz \
+  --pairs test-dmso.pairs.gz \
+  --pairs test-kd.pairs.gz \
+  --track-title DMSO \
+  --track-title KD \
+  -o test_partner_multi.png \
+  -r chr8:23237000-23238000 \
+  --partner-region chr8:23237500-23238500
+```
+
+Partner-region semantics:
+
+- The heatmap counts anchor fragments whose midpoints fall in `--region`.
+- The partner filter is applied to the partner fragment midpoint in `--partner-region`.
+- One pair may contribute two observations if both ends satisfy the anchor rule.
 
 
 #### Gene annotation tracks
@@ -132,7 +164,9 @@ pairtools parse --min-mapq 30 --walks-policy 5unique --drop-sam \
   --max-inter-align-gap 30 --add-columns pos5,pos3 \
   --chroms-path tests/data/mm10.chrom.sizes | \
 pairtools sort | \
-pairtools dedup -o test.pairs
+pairtools dedup -o test.pairs && \
+bgzip -c test.pairs > test.pairs.gz && \
+pairix -f test.pairs.gz
 ```
 
 Important points:
@@ -151,7 +185,9 @@ pairtools parse --min-mapq 30 --walks-policy 5unique --drop-sam \
   --max-inter-align-gap 30 --add-columns pos5,pos3 \
   --chroms-path tests/data/mm10.chrom.sizes | \
 pairtools sort | \
-pairtools dedup -o test.pairs
+pairtools dedup -o test.pairs && \
+bgzip -c test.pairs > test.pairs.gz && \
+pairix -f test.pairs.gz
 ```
 
 The development repository lives at [aryeelab/foci-3d](https://github.com/aryeelab/foci-3d).

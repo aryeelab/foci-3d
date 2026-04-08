@@ -28,7 +28,7 @@ class ParsePipelineError(Exception):
 
 
 class BamToPairsPipeline:
-    """High-level BAM-to-.pairs pipeline."""
+    """High-level BAM-to-indexed-pairs pipeline."""
 
     def __init__(
         self,
@@ -49,10 +49,18 @@ class BamToPairsPipeline:
         if output_pairs:
             self.output_pairs = Path(output_pairs)
         else:
-            self.output_pairs = self.input_bam.with_suffix(".pairs")
+            self.output_pairs = self.input_bam.with_suffix(".pairs.gz")
+        if not str(self.output_pairs).endswith(".pairs.gz"):
+            raise ParsePipelineError(
+                "Output pairs path must end with .pairs.gz. "
+                "Indexed partner-region plotting expects .pairs.gz output, and "
+                "`foci-3d parse` now creates that canonical artifact."
+            )
         self.output_pairs.parent.mkdir(parents=True, exist_ok=True)
 
         self.temp_dir = Path(tempfile.mkdtemp(prefix="foci3d_parse_"))
+        self.uncompressed_pairs = self.temp_dir / f"{self.output_pairs.name[:-3]}"
+        self.output_pairs_index = Path(str(self.output_pairs) + ".px2")
         self.generated_chroms_path: Path | None = None
         self.sorted_bam = self.temp_dir / f"{self.input_bam.stem}.queryname.bam"
         self.total_alignments: int | None = None
@@ -73,20 +81,28 @@ class BamToPairsPipeline:
         parse_cmd: list[str],
         sort_cmd: list[str],
         dedup_cmd: list[str],
+        bgzip_cmd: list[str],
+        pairix_cmd: list[str],
     ) -> str:
         parse_segment = self._format_command(parse_cmd)
         sort_segment = self._format_command(sort_cmd)
         dedup_segment = self._format_command(dedup_cmd)
+        bgzip_segment = f"{self._format_command(bgzip_cmd)} > {shlex.quote(str(self.output_pairs))}"
+        pairix_segment = self._format_command(pairix_cmd)
 
         if source_bam == self.input_bam:
             view_segment = self._format_command(["samtools", "view", "-h", str(source_bam)])
-            return f"{view_segment} | {parse_segment} | {sort_segment} | {dedup_segment}"
+            return (
+                f"{view_segment} | {parse_segment} | {sort_segment} | {dedup_segment} "
+                f"&& {bgzip_segment} && {pairix_segment}"
+            )
 
         quoted_input = shlex.quote(str(self.input_bam))
         return (
             'tmp_bam="$(mktemp -t foci3d.parse.XXXXXX.bam)" && '
             f'samtools sort -n -O BAM -o "$tmp_bam" {quoted_input} && '
             f'samtools view -h "$tmp_bam" | {parse_segment} | {sort_segment} | {dedup_segment} && '
+            f'{bgzip_segment} && {pairix_segment} && '
             'rm -f "$tmp_bam"'
         )
 
@@ -315,9 +331,18 @@ class BamToPairsPipeline:
             str(chroms_path),
         ]
         sort_cmd = ["pairtools", "sort"]
-        dedup_cmd = ["pairtools", "dedup", "-o", str(self.output_pairs)]
+        dedup_cmd = ["pairtools", "dedup", "-o", str(self.uncompressed_pairs)]
+        bgzip_cmd = ["bgzip", "-c", str(self.uncompressed_pairs)]
+        pairix_cmd = ["pairix", "-f", str(self.output_pairs)]
 
-        display_command = self._build_display_command(source_bam, parse_cmd, sort_cmd, dedup_cmd)
+        display_command = self._build_display_command(
+            source_bam,
+            parse_cmd,
+            sort_cmd,
+            dedup_cmd,
+            bgzip_cmd,
+            pairix_cmd,
+        )
         print("Running pairtools parse command in the background:", file=sys.stderr)
         print(f"  {display_command}", file=sys.stderr)
 
@@ -387,16 +412,49 @@ class BamToPairsPipeline:
                 f"pairtools dedup failed with exit code {dedup_returncode}\n"
                 f"Command: {self._format_command(dedup_cmd)}\n{dedup_error}"
             )
+        if not self.uncompressed_pairs.exists():
+            raise ParsePipelineError("pairtools completed without creating the expected intermediate .pairs file")
+
+        self._compress_and_index_pairs()
+
+    def _compress_and_index_pairs(self) -> None:
+        print("Compressing pairs output with bgzip...", file=sys.stderr)
+        bgzip_cmd = ["bgzip", "-c", str(self.uncompressed_pairs)]
+        with open(self.output_pairs, "wb") as output_handle:
+            bgzip_proc = subprocess.Popen(bgzip_cmd, stdout=output_handle, stderr=subprocess.PIPE)
+            _, bgzip_stderr = bgzip_proc.communicate()
+
+        if bgzip_proc.returncode != 0:
+            raise ParsePipelineError(
+                f"bgzip failed with exit code {bgzip_proc.returncode}\n"
+                f"Command: {self._format_command(bgzip_cmd)}\n"
+                f"{bgzip_stderr.decode().strip()}"
+            )
+
+        print("Indexing compressed pairs output with pairix...", file=sys.stderr)
+        pairix_cmd = ["pairix", "-f", str(self.output_pairs)]
+        try:
+            subprocess.run(pairix_cmd, capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as exc:
+            raise ParsePipelineError(
+                f"pairix failed with exit code {exc.returncode}\n"
+                f"Command: {self._format_command(pairix_cmd)}\n"
+                f"{exc.stderr.strip()}"
+            ) from exc
+
         if not self.output_pairs.exists():
-            raise ParsePipelineError("pairtools completed without creating the expected output .pairs file")
+            raise ParsePipelineError("Expected compressed .pairs.gz output was not created")
+        if not self.output_pairs_index.exists():
+            raise ParsePipelineError("Expected Pairix index .px2 output was not created")
 
     def run(self) -> None:
         self.total_alignments = self._count_alignments(self.input_bam)
 
-        print("BAM to .pairs Pipeline", file=sys.stderr)
+        print("BAM to indexed .pairs.gz Pipeline", file=sys.stderr)
         print("=" * 60, file=sys.stderr)
         print(f"Input BAM: {self.input_bam}", file=sys.stderr)
         print(f"Output pairs: {self.output_pairs}", file=sys.stderr)
+        print(f"Output index: {self.output_pairs_index}", file=sys.stderr)
         print(f"Temporary directory: {self.temp_dir}", file=sys.stderr)
         print(f"Total alignments: {self.total_alignments:,}", file=sys.stderr)
         print("=" * 60, file=sys.stderr)
@@ -409,8 +467,9 @@ class BamToPairsPipeline:
 
         elapsed = time.time() - self.start_time
         print("=" * 60, file=sys.stderr)
-        print("BAM to .pairs pipeline completed successfully", file=sys.stderr)
+        print("BAM to indexed .pairs.gz pipeline completed successfully", file=sys.stderr)
         print(f"Output file: {self.output_pairs}", file=sys.stderr)
+        print(f"Index file: {self.output_pairs_index}", file=sys.stderr)
         print(f"Elapsed time: {elapsed:.1f}s", file=sys.stderr)
 
 
@@ -418,22 +477,26 @@ def build_parser(add_help: bool = True, prog: str | None = None) -> argparse.Arg
     parser = argparse.ArgumentParser(
         prog=prog,
         add_help=add_help,
-        description="Convert a BAM into a final deduplicated .pairs file.",
+        description="Convert a BAM into a final deduplicated, bgzipped, Pairix-indexed .pairs.gz file.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Convert a BAM into a final .pairs file
-  foci-3d parse sample.bam -o sample.pairs
+  # Convert a BAM into a final indexed .pairs.gz file
+  foci-3d parse sample.bam -o sample.pairs.gz
 
   # Override the MAPQ threshold
-  foci-3d parse sample.bam -o sample.pairs --min-mapq 40
+  foci-3d parse sample.bam -o sample.pairs.gz --min-mapq 40
 
   # Use an explicit chrom sizes file
-  foci-3d parse sample.bam -o sample.pairs --chroms-path mm10.chrom.sizes
+  foci-3d parse sample.bam -o sample.pairs.gz --chroms-path mm10.chrom.sizes
         """,
     )
     parser.add_argument("input_bam", help="Input BAM file")
-    parser.add_argument("-o", "--output", help="Output .pairs file (default: <input>.pairs)")
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="Output .pairs.gz file (default: <input>.pairs.gz). The matching Pairix index is written to <output>.px2",
+    )
     parser.add_argument(
         "--min-mapq",
         type=int,
@@ -453,7 +516,7 @@ Examples:
 
 
 def check_required_tools() -> list[str]:
-    required_tools = ["samtools", "pairtools"]
+    required_tools = ["samtools", "pairtools", "bgzip", "pairix"]
     return [tool for tool in required_tools if shutil.which(tool) is None]
 
 

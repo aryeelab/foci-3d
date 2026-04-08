@@ -3,6 +3,7 @@ import pandas as pd
 import pysam
 import numpy as np
 import gzip
+import subprocess
 from scipy.ndimage import gaussian_filter
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -749,6 +750,223 @@ def _average_counts_by_fraglen_full_chromosome(tabix_path, chrom, gap_thresh):
     return averages
 
 
+def _prepare_scale_factor_dicts(counts_gz, scale):
+    valid_scale_options = ["no", "by_fragment_length", "yes"]
+    if scale not in valid_scale_options:
+        raise ValueError(f"scale parameter must be one of {valid_scale_options}, got: {scale}")
+
+    raw_scale_factor_dict = None
+    if scale == "no":
+        scale_factor_dict = None
+    elif scale == "by_fragment_length":
+        raw_scale_factor_dict = get_scale_factors(counts_gz, by_fragment_length=True)
+        scale_factor_dict = raw_scale_factor_dict
+    else:
+        raw_scale_factor_dict = get_scale_factors(counts_gz, by_fragment_length=True)
+        scale_factor_dict = get_scale_factors(counts_gz, by_fragment_length=False)
+
+    return raw_scale_factor_dict, scale_factor_dict
+
+
+def _resolve_effective_fragment_len_max(fragment_len_min, fragment_len_max, raw_scale_factor_dict, observed_lengths=None):
+    effective_fragment_len_max = fragment_len_max
+    if effective_fragment_len_max is None:
+        if raw_scale_factor_dict:
+            most_common_len, _ = max(raw_scale_factor_dict.items(), key=lambda item: (item[1], item[0]))
+            effective_fragment_len_max = int(most_common_len)
+        elif observed_lengths is not None and len(observed_lengths) > 0:
+            effective_fragment_len_max = int(max(observed_lengths))
+        else:
+            effective_fragment_len_max = fragment_len_min
+    return max(fragment_len_min, effective_fragment_len_max)
+
+
+def _build_count_matrix_from_df(
+    df,
+    chrom,
+    window_start,
+    window_end,
+    fragment_len_min,
+    fragment_len_max,
+    raw_scale_factor_dict,
+    scale_factor_dict,
+    sigma,
+    log,
+):
+    if df.empty:
+        df = pd.DataFrame(columns=["chrom", "pos", "fragment_length", "count"])
+    else:
+        df = df.copy()
+        df["pos"] = df["pos"].astype(float).round().astype(int)
+        df = df.astype({"fragment_length": int, "count": int})
+
+    observed_lengths = df["fragment_length"].tolist() if not df.empty else []
+    effective_fragment_len_max = _resolve_effective_fragment_len_max(
+        fragment_len_min,
+        fragment_len_max,
+        raw_scale_factor_dict,
+        observed_lengths=observed_lengths,
+    )
+
+    all_pos = np.arange(window_start, window_end + 1)
+    missing_pos = np.setdiff1d(all_pos, df["pos"].unique()) if not df.empty else all_pos
+    if missing_pos.size:
+        placeholder_len = df["fragment_length"].min() if not df.empty else fragment_len_min
+        missing_df = pd.DataFrame(
+            {
+                "chrom": chrom,
+                "pos": missing_pos,
+                "fragment_length": placeholder_len,
+                "count": 0,
+            }
+        )
+        df = pd.concat([df, missing_df], ignore_index=True)
+
+    if fragment_len_max is not None:
+        df = df[df["fragment_length"] <= effective_fragment_len_max].copy()
+
+    if not df.empty:
+        df = df.groupby(["chrom", "pos", "fragment_length"], as_index=False).sum()
+
+    mat = df.pivot(index="fragment_length", columns="pos", values="count").fillna(0)
+    all_lengths = np.arange(fragment_len_min, effective_fragment_len_max + 1)
+    mat = mat.reindex(all_lengths, fill_value=0)
+    mat.index.name = "fragment_length"
+
+    raw_total_counts = mat.sum(axis=1)
+    raw_total_counts.name = "total_counts"
+    raw_total_counts.index.name = "fragment_length"
+
+    if scale_factor_dict is not None:
+        row_names = mat.index.tolist()
+        missing_with_signal = [
+            frag_len for frag_len in row_names
+            if frag_len not in scale_factor_dict and raw_total_counts.loc[frag_len] > 0
+        ]
+        if missing_with_signal:
+            raise KeyError(
+                "Missing scale factors for fragment lengths with nonzero counts: "
+                + ", ".join(str(frag_len) for frag_len in missing_with_signal[:10])
+                + ("..." if len(missing_with_signal) > 10 else "")
+            )
+
+        scale_factor = [scale_factor_dict.get(frag_len, 1.0) for frag_len in row_names]
+        mat = mat.div(scale_factor, axis=0)
+
+    if sigma > 0:
+        smoothed = gaussian_filter(mat.values, sigma=[sigma, sigma])
+        mat = pd.DataFrame(smoothed, index=mat.index, columns=mat.columns)
+
+    if log:
+        mat = mat.where(mat >= 1, 1)
+        mat = np.log2(mat)
+
+    return mat, raw_total_counts
+
+
+def _read_pairs_columns(pairs_path):
+    required_columns = ["chrom1", "chrom2", "pos1", "pos2", "pos51", "pos52", "pos31", "pos32"]
+    with gzip.open(pairs_path, "rt") as handle:
+        for raw_line in handle:
+            if raw_line.startswith("#columns:"):
+                columns = raw_line[len("#columns:"):].strip().split()
+                column_indices = {column: idx for idx, column in enumerate(columns)}
+                missing = [column for column in required_columns if column not in column_indices]
+                if missing:
+                    raise ValueError(
+                        f"Pairs header is missing required columns for partner-region plotting: {', '.join(missing)}"
+                    )
+                return column_indices
+            if raw_line and not raw_line.startswith("#"):
+                break
+
+    raise ValueError("Could not find a #columns header in the indexed pairs file")
+
+
+def _pairix_query_regions(chrom, window_start, window_end, partner_chrom, partner_start, partner_end):
+    if chrom != partner_chrom:
+        left = (chrom, window_start, window_end)
+        right = (partner_chrom, partner_start, partner_end)
+        if chrom > partner_chrom:
+            left, right = right, left
+    elif window_end < partner_start:
+        left = (chrom, window_start, window_end)
+        right = (partner_chrom, partner_start, partner_end)
+    elif partner_end < window_start:
+        left = (partner_chrom, partner_start, partner_end)
+        right = (chrom, window_start, window_end)
+    else:
+        union_start = min(window_start, partner_start)
+        union_end = max(window_end, partner_end)
+        left = (chrom, union_start, union_end)
+        right = (partner_chrom, union_start, union_end)
+
+    return f"{left[0]}:{left[1]}-{left[2]}|{right[0]}:{right[1]}-{right[2]}"
+
+
+def _query_pairix_records(pairs_gz, query_region):
+    cmd = ["pairix", str(pairs_gz), query_region]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as exc:
+        raise OSError(
+            f"pairix query failed with exit code {exc.returncode}: {exc.stderr.strip()}"
+        ) from exc
+
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def _midpoint_and_length_from_pair_fields(fields, column_indices, suffix):
+    chrom = fields[column_indices[f"chrom{suffix}"]]
+    pos5 = int(fields[column_indices[f"pos5{suffix}"]])
+    pos3 = int(fields[column_indices[f"pos3{suffix}"]])
+    start = min(pos5, pos3)
+    end = max(pos5, pos3)
+    midpoint = int(round((start + end) * 0.5))
+    length = end - start + 1
+    return chrom, midpoint, length
+
+
+def _observations_from_pair_records(
+    records,
+    column_indices,
+    chrom,
+    window_start,
+    window_end,
+    partner_chrom,
+    partner_start,
+    partner_end,
+    fragment_len_min,
+    fragment_len_max,
+):
+    observations = []
+
+    for record in records:
+        fields = record.split("\t")
+        chrom1, midpoint1, length1 = _midpoint_and_length_from_pair_fields(fields, column_indices, "1")
+        chrom2, midpoint2, length2 = _midpoint_and_length_from_pair_fields(fields, column_indices, "2")
+
+        if (
+            chrom1 == chrom
+            and window_start <= midpoint1 <= window_end
+            and chrom2 == partner_chrom
+            and partner_start <= midpoint2 <= partner_end
+            and fragment_len_min <= length1 <= fragment_len_max
+        ):
+            observations.append((chrom1, midpoint1, length1, 1))
+
+        if (
+            chrom2 == chrom
+            and window_start <= midpoint2 <= window_end
+            and chrom1 == partner_chrom
+            and partner_start <= midpoint1 <= partner_end
+            and fragment_len_min <= length2 <= fragment_len_max
+        ):
+            observations.append((chrom2, midpoint2, length2, 1))
+
+    return pd.DataFrame(observations, columns=["chrom", "pos", "fragment_length", "count"])
+
+
 
 
 
@@ -804,21 +1022,7 @@ def get_count_matrix(counts_gz: str,
     pd.Series
         Series of total raw counts for each fragment length in the range [fragment_len_min, fragment_len_max]
     """
-    # Parameter validation and conversion
-    valid_scale_options = ["no", "by_fragment_length", "yes"]
-    if scale not in valid_scale_options:
-        raise ValueError(f"scale parameter must be one of {valid_scale_options}, got: {scale}")
-
-    # Convert scale parameter to scale_factor_dict
-    raw_scale_factor_dict = None
-    if scale == "no":
-        scale_factor_dict = None
-    elif scale == "by_fragment_length":
-        raw_scale_factor_dict = get_scale_factors(counts_gz, by_fragment_length=True)
-        scale_factor_dict = raw_scale_factor_dict
-    elif scale == "yes":
-        raw_scale_factor_dict = get_scale_factors(counts_gz, by_fragment_length=True)
-        scale_factor_dict = get_scale_factors(counts_gz, by_fragment_length=False)
+    raw_scale_factor_dict, scale_factor_dict = _prepare_scale_factor_dicts(counts_gz, scale)
 
     # open tabix file and fetch lines
     tb = pysam.TabixFile(counts_gz)
@@ -827,95 +1031,76 @@ def get_count_matrix(counts_gz: str,
     # parse into a DataFrame
     rows = [rec.split('\t') for rec in records]
     df = pd.DataFrame(rows, columns=['chrom', 'pos', 'fragment_length', 'count'])
-
-    # Handle float positions by converting to int via rounding
-    df['pos'] = df['pos'].astype(float).round().astype(int)
-    df = df.astype({
-        'fragment_length': int,
-        'count': int
-    })
-
-    # ensure every position is represented
-    all_pos = np.arange(window_start, window_end + 1)
-    missing_pos = np.setdiff1d(all_pos, df['pos'].unique())
-    if missing_pos.size:
-        # use a placeholder fragment length (will be zero-filled later)
-        placeholder_len = df['fragment_length'].min() if not df.empty else fragment_len_min
-        missing_df = pd.DataFrame({
-            'chrom': chrom,
-            'pos': missing_pos,
-            'fragment_length': placeholder_len,
-            'count': 0
-        })
-        df = pd.concat([df, missing_df], ignore_index=True)
-
-    effective_fragment_len_max = fragment_len_max
-    if effective_fragment_len_max is None:
-        if raw_scale_factor_dict:
-            most_common_len, _ = max(raw_scale_factor_dict.items(), key=lambda item: (item[1], item[0]))
-            effective_fragment_len_max = int(most_common_len)
-        else:
-            effective_fragment_len_max = (
-                int(df['fragment_length'].max()) if not df.empty else fragment_len_min
-            )
-    effective_fragment_len_max = max(fragment_len_min, effective_fragment_len_max)
-
-    # Apply an explicit upper bound only as a filter. Do not collapse longer
-    # fragments into the terminal row.
-    if fragment_len_max is not None:
-        df = df[df['fragment_length'] <= effective_fragment_len_max].copy()
+    return _build_count_matrix_from_df(
+        df,
+        chrom,
+        window_start,
+        window_end,
+        fragment_len_min,
+        fragment_len_max,
+        raw_scale_factor_dict,
+        scale_factor_dict,
+        sigma,
+        log,
+    )
 
 
-    # Aggregate any duplicate rows that may arise after rounding/filtering.
-    df = df.groupby(['chrom', 'pos', 'fragment_length'], as_index=False).sum()
-
-    # pivot to get matrix and fill gaps with 0
-    mat = df.pivot(index='fragment_length', columns='pos', values='count').fillna(0)
-
-    # ensure every fragment_length is represented
-    all_lengths = np.arange(fragment_len_min, effective_fragment_len_max + 1)
-    mat = mat.reindex(all_lengths, fill_value=0)
-    mat.index.name = 'fragment_length'
-
-    # Count the total number of raw counts for each fragment length
-    raw_total_counts = mat.sum(axis=1)
-    raw_total_counts.name = 'total_counts'
-    raw_total_counts.index.name = 'fragment_length'
-
-    # Optional scaling of counts by fragment length-specific scale factors.
-    # Some fragment lengths may be absent from the input data but introduced as
-    # all-zero rows by the dense reindexing above. Those synthetic rows do not
-    # necessarily have embedded scale factors, so only require scale factors for
-    # rows that actually contain signal.
-    if scale_factor_dict is not None:
-        row_names = mat.index.tolist()
-        missing_with_signal = [
-            frag_len for frag_len in row_names
-            if frag_len not in scale_factor_dict and raw_total_counts.loc[frag_len] > 0
-        ]
-        if missing_with_signal:
-            raise KeyError(
-                "Missing scale factors for fragment lengths with nonzero counts: "
-                + ", ".join(str(frag_len) for frag_len in missing_with_signal[:10])
-                + ("..." if len(missing_with_signal) > 10 else "")
-            )
-
-        scale_factor = [scale_factor_dict.get(frag_len, 1.0) for frag_len in row_names]
-        mat = mat.div(scale_factor, axis=0)
-
-    # Optional smoothing
-    if sigma > 0:
-        smoothed = gaussian_filter(mat.values, sigma=[sigma, sigma])
-        mat = pd.DataFrame(smoothed, index=mat.index, columns=mat.columns)
-
-    # Optional log transform. Set pre-norm values <1 to 1. This corresponds to counts
-    # that are equal to the fragment length-specific mean when scaling is applied.
-    if log:
-        # Replace values < 1 with 1
-        mat = mat.where(mat >= 1, 1)
-        mat = np.log2(mat)
-
-    return mat, raw_total_counts
+def get_partner_filtered_count_matrix(
+    counts_gz: str,
+    pairs_gz: str,
+    chrom: str,
+    window_start: int,
+    window_end: int,
+    partner_chrom: str,
+    partner_start: int,
+    partner_end: int,
+    fragment_len_min=25,
+    fragment_len_max=None,
+    scale="yes",
+    sigma=0,
+    log=False,
+):
+    raw_scale_factor_dict, scale_factor_dict = _prepare_scale_factor_dicts(counts_gz, scale)
+    effective_fragment_len_max = _resolve_effective_fragment_len_max(
+        fragment_len_min,
+        fragment_len_max,
+        raw_scale_factor_dict,
+    )
+    padding = int(np.ceil(effective_fragment_len_max / 2.0))
+    padded_query = _pairix_query_regions(
+        chrom,
+        max(1, window_start - padding),
+        window_end + padding,
+        partner_chrom,
+        max(1, partner_start - padding),
+        partner_end + padding,
+    )
+    column_indices = _read_pairs_columns(pairs_gz)
+    records = _query_pairix_records(pairs_gz, padded_query)
+    df = _observations_from_pair_records(
+        records,
+        column_indices,
+        chrom,
+        window_start,
+        window_end,
+        partner_chrom,
+        partner_start,
+        partner_end,
+        fragment_len_min,
+        effective_fragment_len_max,
+    )
+    return _build_count_matrix_from_df(
+        df,
+        chrom,
+        window_start,
+        window_end,
+        fragment_len_min,
+        fragment_len_max,
+        raw_scale_factor_dict,
+        scale_factor_dict,
+        sigma,
+        log,
+    )
 
 
 def _nice_bp_spacing(raw_spacing):

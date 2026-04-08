@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -16,3 +17,7 @@ def subprocess_env() -> dict[str, str]:
     env["PATH"] = str(Path(sys.executable).resolve().parent) + os.pathsep + env.get("PATH", "")
     env.setdefault("MPLCONFIGDIR", str(REPO_ROOT / ".mplconfig"))
     return env
+
+
+def require_external_tools(*tool_names: str) -> list[str]:
+    return [tool for tool in tool_names if shutil.which(tool) is None]

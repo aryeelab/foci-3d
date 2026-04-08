@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import sys
+import shutil
 from pathlib import Path
 
 import matplotlib
@@ -14,6 +14,7 @@ matplotlib.use("Agg")
 
 from .footprinting import (
     get_count_matrix,
+    get_partner_filtered_count_matrix,
     plot_count_matrix,
     plot_count_matrices,
     read_footprints_tsv,
@@ -54,6 +55,15 @@ def build_parser(add_help: bool = True, prog: str | None = None) -> argparse.Arg
         "--region",
         required=True,
         help='Genomic region to plot in the format "chr:start-end"',
+    )
+    parser.add_argument(
+        "--pairs",
+        action="append",
+        help="Indexed .pairs.gz file used for partner-filtered plots. Repeat once per --input, in matching order",
+    )
+    parser.add_argument(
+        "--partner-region",
+        help='Optional partner fragment region in the format "chr:start-end". Requires --pairs and an accompanying .px2 index',
     )
     parser.add_argument(
         "--footprints",
@@ -136,6 +146,27 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
         parser.error("--scale-max must be provided once or exactly once per --input")
 
     chrom, start, end = parse_region(args.region)
+    partner_region = None
+    if args.partner_region:
+        partner_region = parse_region(args.partner_region)
+        if not args.pairs:
+            parser.error("--partner-region requires --pairs")
+        if len(args.pairs) != len(args.input):
+            parser.error("--pairs must be provided exactly once per --input when --partner-region is used")
+
+        for pairs_path in args.pairs:
+            if not os.path.exists(pairs_path):
+                parser.error(f"Pairs file not found: {pairs_path}")
+            if not pairs_path.endswith(".pairs.gz"):
+                parser.error("--partner-region requires each --pairs file to end with .pairs.gz")
+            expected_index_path = pairs_path + ".px2"
+            if not os.path.exists(expected_index_path):
+                parser.error(
+                    f"--partner-region requires an indexed pairs file. For '{pairs_path}', expected '{expected_index_path}'. "
+                    "Create it with bgzip + pairix, or generate it directly with `foci-3d parse`."
+                )
+        if shutil.which("pairix") is None:
+            parser.error("pairix executable not found. Install pairix or use the supported environment from environment.yml.")
 
     blobs = None
     if args.footprints:
@@ -164,17 +195,35 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
         )
 
     matrices = []
-    for input_path in args.input:
-        matrix, _ = get_count_matrix(
-            counts_gz=input_path,
-            chrom=chrom,
-            window_start=start,
-            window_end=end,
-            fragment_len_min=args.fragment_len_min,
-            fragment_len_max=args.fragment_len_max,
-            scale=args.scale,
-            sigma=args.sigma,
-        )
+    pairs_paths = args.pairs or [None] * len(args.input)
+    for input_path, pairs_path in zip(args.input, pairs_paths):
+        if partner_region is None:
+            matrix, _ = get_count_matrix(
+                counts_gz=input_path,
+                chrom=chrom,
+                window_start=start,
+                window_end=end,
+                fragment_len_min=args.fragment_len_min,
+                fragment_len_max=args.fragment_len_max,
+                scale=args.scale,
+                sigma=args.sigma,
+            )
+        else:
+            partner_chrom, partner_start, partner_end = partner_region
+            matrix, _ = get_partner_filtered_count_matrix(
+                counts_gz=input_path,
+                pairs_gz=pairs_path,
+                chrom=chrom,
+                window_start=start,
+                window_end=end,
+                partner_chrom=partner_chrom,
+                partner_start=partner_start,
+                partner_end=partner_end,
+                fragment_len_min=args.fragment_len_min,
+                fragment_len_max=args.fragment_len_max,
+                scale=args.scale,
+                sigma=args.sigma,
+            )
         matrices.append(matrix)
 
     track_titles = args.track_title or [Path(input_path).name for input_path in args.input]

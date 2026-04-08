@@ -11,9 +11,11 @@ import unittest
 from collections import OrderedDict
 from pathlib import Path
 
+import gzip
 import pysam
 
-from helpers import REPO_ROOT, subprocess_env
+from helpers import REPO_ROOT, require_external_tools, subprocess_env
+from foci3d.parse import BamToPairsPipeline, ParsePipelineError
 
 
 class TestParseCommand(unittest.TestCase):
@@ -79,8 +81,7 @@ class TestParseCommand(unittest.TestCase):
         return output_path
 
     def run_cli(self, *args, timeout=300):
-        required_tools = ["samtools", "pairtools"]
-        missing = [tool for tool in required_tools if shutil.which(tool) is None]
+        missing = require_external_tools("samtools", "pairtools", "bgzip", "pairix")
         if missing:
             self.skipTest(f"Required external tools are not available: {', '.join(missing)}")
 
@@ -94,13 +95,14 @@ class TestParseCommand(unittest.TestCase):
 
     def _assert_pairs_file(self, output_path: Path) -> None:
         self.assertTrue(output_path.exists(), f"Expected output file to exist: {output_path}")
-        with output_path.open() as handle:
+        self.assertTrue(Path(str(output_path) + ".px2").exists(), f"Expected Pairix index to exist for: {output_path}")
+        with gzip.open(output_path, "rt") as handle:
             lines = handle.readlines()
         self.assertTrue(any(line.startswith("#columns:") for line in lines))
         self.assertTrue(any(line and not line.startswith("#") for line in lines))
 
     def test_parse_creates_pairs_with_explicit_chroms(self):
-        output_path = self.temp_dir / "explicit.pairs"
+        output_path = self.temp_dir / "explicit.pairs.gz"
         result = self.run_cli(
             self.input_bam,
             "-o",
@@ -122,7 +124,7 @@ class TestParseCommand(unittest.TestCase):
         self.assertIn("100%", result.stderr)
 
     def test_parse_autogenerates_chroms(self):
-        output_path = self.temp_dir / "autochroms.pairs"
+        output_path = self.temp_dir / "autochroms.pairs.gz"
         result = self.run_cli(self.input_bam, "-o", output_path, "--min-mapq", "20")
         if result.returncode != 0:
             self.fail(
@@ -135,7 +137,7 @@ class TestParseCommand(unittest.TestCase):
 
     def test_queryname_sorted_bam_skips_temp_sort(self):
         input_bam = self._build_queryname_sorted_bam("queryname_sorted.bam", declared_sort_order="queryname")
-        output_path = self.temp_dir / "queryname_sorted.pairs"
+        output_path = self.temp_dir / "queryname_sorted.pairs.gz"
         result = self.run_cli(input_bam, "-o", output_path, "--min-mapq", "20")
         if result.returncode != 0:
             self.fail(
@@ -149,7 +151,7 @@ class TestParseCommand(unittest.TestCase):
 
     def test_unsorted_bam_triggers_temp_sort(self):
         input_bam = self._build_nonadjacent_bam("needs_sort.bam")
-        output_path = self.temp_dir / "needs_sort.pairs"
+        output_path = self.temp_dir / "needs_sort.pairs.gz"
         result = self.run_cli(input_bam, "-o", output_path, "--min-mapq", "20")
         if result.returncode != 0:
             self.fail(
@@ -163,7 +165,7 @@ class TestParseCommand(unittest.TestCase):
 
     def test_heuristic_adjacency_accepts_without_sort(self):
         input_bam = self._build_queryname_sorted_bam("heuristic_ok.bam", declared_sort_order="coordinate")
-        output_path = self.temp_dir / "heuristic_ok.pairs"
+        output_path = self.temp_dir / "heuristic_ok.pairs.gz"
         result = self.run_cli(input_bam, "-o", output_path, "--min-mapq", "20")
         if result.returncode != 0:
             self.fail(
@@ -174,3 +176,16 @@ class TestParseCommand(unittest.TestCase):
         self._assert_pairs_file(output_path)
         self.assertIn("accepted heuristically", result.stderr)
         self.assertNotIn("temporary `samtools sort -n`", result.stderr)
+
+    def test_parse_defaults_to_pairs_gz_output(self):
+        pipeline = BamToPairsPipeline(str(self.input_bam), output_pairs=None, chroms_path=str(self.chroms_path))
+        self.assertTrue(str(pipeline.output_pairs).endswith(".pairs.gz"))
+        pipeline.cleanup()
+
+    def test_parse_rejects_non_gz_pairs_suffix(self):
+        with self.assertRaisesRegex(ParsePipelineError, "must end with \\.pairs\\.gz"):
+            BamToPairsPipeline(
+                str(self.input_bam),
+                output_pairs=str(self.temp_dir / "bad_output.pairs"),
+                chroms_path=str(self.chroms_path),
+            )

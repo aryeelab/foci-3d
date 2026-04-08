@@ -18,6 +18,7 @@ class TestPairsToFragmentCounts(unittest.TestCase):
     def setUpClass(cls):
         cls.repo_root = REPO_ROOT
         cls.input_pairs_file = cls.repo_root / "tests" / "data" / "mesc_microc_test.pairs"
+        cls.input_pairs_gz_file = cls.repo_root / "tests" / "data" / "mesc_microc_test.pairs.gz"
         cls.temp_dir = tempfile.mkdtemp()
         cls.temp_output_file = Path(cls.temp_dir) / "test_output.counts.tsv.gz"
         cls.expected_md5 = "4e52532340a170e541c5c743e4ba940d"
@@ -33,22 +34,25 @@ class TestPairsToFragmentCounts(unittest.TestCase):
                 md5_hash.update(chunk)
         return md5_hash.hexdigest()
 
+    def _run_count(self, input_pairs_path, output_path):
+        cmd = [
+            sys.executable,
+            "-m",
+            "foci3d.cli",
+            "count",
+            str(input_pairs_path),
+            "-o",
+            str(output_path),
+        ]
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=subprocess_env())
+
     def test_pairs_to_fragment_counts_pipeline(self):
         required_tools = ["pairtools", "bgzip", "tabix", "sort", "uniq", "awk"]
         missing = [tool for tool in required_tools if shutil.which(tool) is None]
         if missing:
             self.skipTest(f"Required external tools are not available: {', '.join(missing)}")
 
-        cmd = [
-            sys.executable,
-            "-m",
-            "foci3d.cli",
-            "count",
-            str(self.input_pairs_file),
-            "-o",
-            str(self.temp_output_file),
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=subprocess_env())
+        result = self._run_count(self.input_pairs_file, self.temp_output_file)
         if result.returncode != 0:
             self.fail(
                 f"count command failed with return code {result.returncode}\n"
@@ -69,3 +73,20 @@ class TestPairsToFragmentCounts(unittest.TestCase):
 
         generated_md5 = self.calculate_md5(self.temp_output_file)
         self.assertEqual(self.expected_md5, generated_md5)
+
+    def test_count_accepts_gzipped_pairs_input(self):
+        required_tools = ["pairtools", "bgzip", "tabix", "sort", "uniq", "awk"]
+        missing = [tool for tool in required_tools if shutil.which(tool) is None]
+        if missing:
+            self.skipTest(f"Required external tools are not available: {', '.join(missing)}")
+
+        output_path = Path(self.temp_dir) / "test_output_from_gz.counts.tsv.gz"
+        result = self._run_count(self.input_pairs_gz_file, output_path)
+        if result.returncode != 0:
+            self.fail(
+                f"count command failed with return code {result.returncode}\n"
+                f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+            )
+
+        self.assertTrue(output_path.exists())
+        self.assertTrue(Path(str(output_path) + ".tbi").exists())

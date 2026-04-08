@@ -71,7 +71,7 @@ class FragmentCountsPipeline:
         if output_file:
             self.output_file = Path(output_file)
         else:
-            # Auto-generate output name: input.pairs -> input.counts.tsv.gz
+            # Auto-generate output name: input.pairs(.gz) -> input.counts.tsv.gz
             base_name = self.input_file.stem
             if base_name.endswith('.pairs'):
                 base_name = base_name[:-6]  # Remove .pairs
@@ -668,16 +668,16 @@ Pipeline Steps:
 
 Examples:
   # Basic usage with auto-generated output name
-  foci-3d count input.pairs
+  foci-3d count input.pairs.gz
 
   # Specify custom output file
-  foci-3d count input.pairs -o output.counts.tsv.gz
+  foci-3d count input.pairs.gz -o output.counts.tsv.gz
 
   # Keep intermediate files for debugging
-  foci-3d count input.pairs --keep-intermediates
+  foci-3d count input.pairs.gz --keep-intermediates
 
   # Verbose output with detailed progress
-  foci-3d count input.pairs --verbose
+  foci-3d count input.pairs.gz --verbose
 
 Output:
   - Main output: Tabix-indexed fragment counts file (.counts.tsv.gz)
@@ -695,7 +695,7 @@ Performance:
 
     parser.add_argument(
         "input_file",
-        help="Input pairs file (e.g., sample.pairs)"
+        help="Input pairs file (e.g., sample.pairs.gz; uncompressed .pairs is also accepted)"
     )
 
     parser.add_argument(
