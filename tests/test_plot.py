@@ -535,6 +535,28 @@ class TestGeneTrackHelpers(unittest.TestCase):
         self.assertIn("23,237,500", [tick.get_text() for tick in gene_ax.get_xticklabels()])
         plt.close(figure)
 
+    def test_plot_count_matrix_uses_custom_x_axis_label(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        matrix, _ = get_count_matrix(
+            counts_gz=str(counts_file),
+            chrom="chr8",
+            window_start=23237000,
+            window_end=23238000,
+            fragment_len_min=25,
+            fragment_len_max=60,
+            scale="yes",
+            sigma=0,
+        )
+        figure = plot_count_matrix(
+            matrix,
+            xtick_spacing=500,
+            x_axis_label="Chr8 Position (bp)",
+            return_fig=True,
+        )
+        heat_ax = next(ax for ax in figure.axes if ax.get_ylabel() == "Fragment Length")
+        self.assertEqual(heat_ax.get_xlabel(), "Chr8 Position (bp)")
+        plt.close(figure)
+
     def test_plot_count_matrices_shared_bottom_axis(self):
         counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
         gtf_path = REPO_ROOT / "tests" / "data" / "test_genes.gtf"

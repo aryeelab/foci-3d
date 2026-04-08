@@ -50,6 +50,14 @@ def parse_partner_region(partner_region: str) -> tuple[str | None, tuple[str, in
     return label, parse_region(region_text)
 
 
+def format_x_axis_label(chrom: str) -> str:
+    if chrom.lower().startswith("chr"):
+        display_chrom = f"Chr{chrom[3:]}"
+    else:
+        display_chrom = chrom
+    return f"{display_chrom} Position (bp)"
+
+
 def build_parser(add_help: bool = True, prog: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog,
@@ -256,6 +264,8 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
 
     effective_fig_height = args.fig_height * max(1, len(matrices))
 
+    x_axis_label = format_x_axis_label(chrom)
+
     if len(matrices) == 1:
         figure = plot_count_matrix(
             matrices[0],
@@ -268,6 +278,7 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
             gene_height=args.gene_height,
             xtick_spacing=args.xtick_spacing,
             figsize=(args.fig_width, effective_fig_height),
+            x_axis_label=x_axis_label,
             return_fig=True,
         )
     else:
@@ -283,6 +294,7 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
             gene_height=args.gene_height,
             xtick_spacing=args.xtick_spacing,
             figsize=(args.fig_width, effective_fig_height),
+            x_axis_label=x_axis_label,
             return_fig=True,
         )
 

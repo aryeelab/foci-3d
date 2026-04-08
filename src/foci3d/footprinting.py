@@ -1493,7 +1493,15 @@ def _pack_gene_track_rows(gene_track):
     return packed_models, max(1, len(rows))
 
 
-def _draw_gene_annotation_track(ax, gene_track, start_bp, end_bp, xtick_positions, xtick_labels):
+def _draw_gene_annotation_track(
+    ax,
+    gene_track,
+    start_bp,
+    end_bp,
+    xtick_positions,
+    xtick_labels,
+    x_axis_label="Position (bp)",
+):
     span_bp = end_bp - start_bp + 1
     packed_models, num_rows = _pack_gene_track_rows(gene_track)
     exon_half_height = 0.18
@@ -1571,7 +1579,7 @@ def _draw_gene_annotation_track(ax, gene_track, start_bp, end_bp, xtick_position
 
     ax.set_xticks(xtick_positions)
     ax.set_xticklabels(xtick_labels, rotation=0, ha="center")
-    ax.set_xlabel("Position (bp)")
+    ax.set_xlabel(x_axis_label)
 
 
 def _default_vmax(mat_plot):
@@ -1619,7 +1627,8 @@ def plot_count_matrix(
     gene_height=1.0,
     figsize=(10, 4),
     aspect='auto',
-    return_fig=False
+    return_fig=False,
+    x_axis_label="Position (bp)",
 ):
     """
     Plot a heatmap of `mat` with optional bar-track(s) below,
@@ -1804,7 +1813,15 @@ def plot_count_matrix(
 
     if has_gene_track:
         gene_ax = fig.add_subplot(gs[1 + n_tracks, 0])
-        _draw_gene_annotation_track(gene_ax, gene_track, start_bp, end_bp, xtick_positions, xtick_labels)
+        _draw_gene_annotation_track(
+            gene_ax,
+            gene_track,
+            start_bp,
+            end_bp,
+            xtick_positions,
+            xtick_labels,
+            x_axis_label=x_axis_label,
+        )
         track_axes.append(gene_ax)
 
     if track_axes:
@@ -1815,13 +1832,13 @@ def plot_count_matrix(
         bottom_ax = track_axes[-1]
         bottom_ax.set_xticks(xtick_positions)
         bottom_ax.set_xticklabels(xtick_labels, rotation=0, ha='center')
-        bottom_ax.set_xlabel('Position (bp)')
+        bottom_ax.set_xlabel(x_axis_label)
         bottom_ax.xaxis.set_tick_params(bottom=True, labelbottom=True)
     else:
         # No tracks provided: show x-axis on the heatmap itself
         ax_heat.set_xticks(xtick_positions)
         ax_heat.set_xticklabels(xtick_labels, rotation=0, ha='center')
-        ax_heat.set_xlabel('Position (bp)')
+        ax_heat.set_xlabel(x_axis_label)
         ax_heat.xaxis.set_tick_params(bottom=True, labelbottom=True)
 
     if return_fig:
@@ -1848,6 +1865,7 @@ def plot_count_matrices(
     figsize=(10, 4),
     aspect='auto',
     return_fig=False,
+    x_axis_label="Position (bp)",
 ):
     """
     Plot multiple footprint heatmaps stacked vertically with a shared genomic x-axis
@@ -1952,12 +1970,20 @@ def plot_count_matrices(
 
     if has_gene_track:
         gene_ax = fig.add_subplot(gs[num_heatmaps, 0])
-        _draw_gene_annotation_track(gene_ax, gene_track, start_bp, end_bp, xtick_positions, xtick_labels)
+        _draw_gene_annotation_track(
+            gene_ax,
+            gene_track,
+            start_bp,
+            end_bp,
+            xtick_positions,
+            xtick_labels,
+            x_axis_label=x_axis_label,
+        )
     else:
         bottom_ax = heat_axes[-1]
         bottom_ax.set_xticks(xtick_positions)
         bottom_ax.set_xticklabels(xtick_labels, rotation=0, ha='center')
-        bottom_ax.set_xlabel('Position (bp)')
+        bottom_ax.set_xlabel(x_axis_label)
         bottom_ax.xaxis.set_tick_params(bottom=True, labelbottom=True)
 
     if return_fig:
