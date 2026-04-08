@@ -36,6 +36,20 @@ def parse_region(region: str) -> tuple[str, int, int]:
     return chrom, start, end
 
 
+def parse_partner_region(partner_region: str) -> tuple[str | None, tuple[str, int, int]]:
+    label = None
+    region_text = partner_region
+    if "=" in partner_region:
+        label, region_text = partner_region.split("=", 1)
+        label = label.strip()
+        if not label:
+            raise ValueError(
+                f"Invalid partner region format: {partner_region}. Expected chr:start-end or NAME=chr:start-end"
+            )
+
+    return label, parse_region(region_text)
+
+
 def build_parser(add_help: bool = True, prog: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog,
@@ -63,7 +77,8 @@ def build_parser(add_help: bool = True, prog: str | None = None) -> argparse.Arg
     )
     parser.add_argument(
         "--partner-region",
-        help='Optional partner fragment region in the format "chr:start-end". Requires --pairs and an accompanying .px2 index',
+        action="append",
+        help='Optional partner fragment region in the format "chr:start-end" or "NAME=chr:start-end". Repeat to render one panel per partner region. Requires --pairs and an accompanying .px2 index',
     )
     parser.add_argument(
         "--footprints",
@@ -146,9 +161,12 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
         parser.error("--scale-max must be provided once or exactly once per --input")
 
     chrom, start, end = parse_region(args.region)
-    partner_region = None
+    partner_regions = []
     if args.partner_region:
-        partner_region = parse_region(args.partner_region)
+        try:
+            partner_regions = [parse_partner_region(region_text) for region_text in args.partner_region]
+        except ValueError as exc:
+            parser.error(str(exc))
         if not args.pairs:
             parser.error("--partner-region requires --pairs")
         if len(args.pairs) != len(args.input):
@@ -196,8 +214,10 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
 
     matrices = []
     pairs_paths = args.pairs or [None] * len(args.input)
-    for input_path, pairs_path in zip(args.input, pairs_paths):
-        if partner_region is None:
+    base_track_titles = args.track_title or [Path(input_path).name for input_path in args.input]
+    panel_titles = []
+    if not partner_regions:
+        for input_path, pairs_path in zip(args.input, pairs_paths):
             matrix, _ = get_count_matrix(
                 counts_gz=input_path,
                 chrom=chrom,
@@ -208,30 +228,38 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
                 scale=args.scale,
                 sigma=args.sigma,
             )
-        else:
-            partner_chrom, partner_start, partner_end = partner_region
-            matrix, _ = get_partner_filtered_count_matrix(
-                counts_gz=input_path,
-                pairs_gz=pairs_path,
-                chrom=chrom,
-                window_start=start,
-                window_end=end,
-                partner_chrom=partner_chrom,
-                partner_start=partner_start,
-                partner_end=partner_end,
-                fragment_len_min=args.fragment_len_min,
-                fragment_len_max=args.fragment_len_max,
-                scale=args.scale,
-                sigma=args.sigma,
-            )
-        matrices.append(matrix)
+            matrices.append(matrix)
+        panel_titles = base_track_titles
+    else:
+        for partner_label, (partner_chrom, partner_start, partner_end) in partner_regions:
+            partner_display = partner_label or f"{partner_chrom}:{partner_start}-{partner_end}"
+            for input_path, pairs_path, track_title in zip(args.input, pairs_paths, base_track_titles):
+                matrix, _ = get_partner_filtered_count_matrix(
+                    counts_gz=input_path,
+                    pairs_gz=pairs_path,
+                    chrom=chrom,
+                    window_start=start,
+                    window_end=end,
+                    partner_chrom=partner_chrom,
+                    partner_start=partner_start,
+                    partner_end=partner_end,
+                    fragment_len_min=args.fragment_len_min,
+                    fragment_len_max=args.fragment_len_max,
+                    scale=args.scale,
+                    sigma=args.sigma,
+                )
+                matrices.append(matrix)
+                if len(args.input) == 1:
+                    panel_titles.append(f"Partner in {partner_display}")
+                else:
+                    panel_titles.append(f"{track_title} | Partner in {partner_display}")
 
-    track_titles = args.track_title or [Path(input_path).name for input_path in args.input]
+    effective_fig_height = args.fig_height * max(1, len(matrices))
 
     if len(matrices) == 1:
         figure = plot_count_matrix(
             matrices[0],
-            title=track_titles[0],
+            title=panel_titles[0],
             vmax=args.scale_max[0] if args.scale_max else None,
             min_frag_length=args.fragment_len_min,
             max_frag_length=args.fragment_len_max,
@@ -239,13 +267,13 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
             gene_track=gene_track,
             gene_height=args.gene_height,
             xtick_spacing=args.xtick_spacing,
-            figsize=(args.fig_width, args.fig_height),
+            figsize=(args.fig_width, effective_fig_height),
             return_fig=True,
         )
     else:
         figure = plot_count_matrices(
             matrices,
-            track_titles=track_titles,
+            track_titles=panel_titles,
             title=args.title or f"{chrom}:{start:,}-{end:,}",
             vmax=args.scale_max,
             min_frag_length=args.fragment_len_min,
@@ -254,7 +282,7 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
             gene_track=gene_track,
             gene_height=args.gene_height,
             xtick_spacing=args.xtick_spacing,
-            figsize=(args.fig_width, args.fig_height),
+            figsize=(args.fig_width, effective_fig_height),
             return_fig=True,
         )
 

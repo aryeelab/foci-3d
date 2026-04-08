@@ -11,6 +11,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 from helpers import REPO_ROOT, require_external_tools, subprocess_env
+from foci3d import plot as plot_module
 from foci3d.footprinting import (
     _default_vmax,
     get_count_matrix,
@@ -207,6 +208,29 @@ class TestPlotCommand(unittest.TestCase):
                 result.stderr,
             )
 
+    def test_plot_partner_region_rejects_empty_label(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        pairs_path = REPO_ROOT / "tests" / "data" / "mesc_microc_test.pairs.gz"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / "partner_plot.png"
+            result = self.run_cli(
+                "-i",
+                counts_file,
+                "--pairs",
+                pairs_path,
+                "-o",
+                output_file,
+                "-r",
+                "chr8:23237000-23238000",
+                "--partner-region",
+                "=chr8:23237000-23238000",
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "Invalid partner region format: =chr8:23237000-23238000. Expected chr:start-end or NAME=chr:start-end",
+                result.stderr,
+            )
+
     def test_plot_partner_region_creates_image(self):
         missing = require_external_tools("bgzip", "pairix")
         if missing:
@@ -231,6 +255,126 @@ class TestPlotCommand(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertTrue(output_file.exists())
             self.assertGreater(output_file.stat().st_size, 0)
+
+    def test_plot_with_multiple_labeled_partner_regions_builds_expected_titles(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        pairs_path = REPO_ROOT / "tests" / "data" / "mesc_microc_test.pairs.gz"
+        captured = {}
+
+        class DummyFigure:
+            def savefig(self, *args, **kwargs):
+                return None
+
+        def fake_get_partner_filtered_count_matrix(**kwargs):
+            return get_count_matrix(
+                counts_gz=kwargs["counts_gz"],
+                chrom=kwargs["chrom"],
+                window_start=kwargs["window_start"],
+                window_end=kwargs["window_end"],
+                fragment_len_min=kwargs["fragment_len_min"],
+                fragment_len_max=kwargs["fragment_len_max"],
+                scale="no",
+                sigma=0,
+            )
+
+        def fake_plot_count_matrices(matrices, track_titles=None, figsize=None, **kwargs):
+            captured["num_matrices"] = len(matrices)
+            captured["track_titles"] = track_titles
+            captured["figsize"] = figsize
+            return DummyFigure()
+
+        with mock.patch.object(plot_module, "get_partner_filtered_count_matrix", side_effect=fake_get_partner_filtered_count_matrix), mock.patch.object(
+            plot_module,
+            "plot_count_matrices",
+            side_effect=fake_plot_count_matrices,
+        ):
+            result = plot_module.main(
+                [
+                    "-i",
+                    str(counts_file),
+                    "-i",
+                    str(counts_file),
+                    "--pairs",
+                    str(pairs_path),
+                    "--pairs",
+                    str(pairs_path),
+                    "--track-title",
+                    "Track A",
+                    "--track-title",
+                    "Track B",
+                    "-o",
+                    "dummy.png",
+                    "-r",
+                    "chr8:23237000-23238000",
+                    "--partner-region",
+                    "E1=chr8:23237000-23238000",
+                    "--partner-region",
+                    "E2=chr8:23237500-23238500",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(captured["num_matrices"], 4)
+        self.assertEqual(
+            captured["track_titles"],
+            [
+                "Track A | Partner in E1",
+                "Track B | Partner in E1",
+                "Track A | Partner in E2",
+                "Track B | Partner in E2",
+            ],
+        )
+        self.assertEqual(captured["figsize"], (10.0, 6.0))
+
+    def test_plot_with_single_input_labeled_partner_region_uses_partner_title(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        pairs_path = REPO_ROOT / "tests" / "data" / "mesc_microc_test.pairs.gz"
+        captured = {}
+
+        class DummyFigure:
+            def savefig(self, *args, **kwargs):
+                return None
+
+        def fake_get_partner_filtered_count_matrix(**kwargs):
+            return get_count_matrix(
+                counts_gz=kwargs["counts_gz"],
+                chrom=kwargs["chrom"],
+                window_start=kwargs["window_start"],
+                window_end=kwargs["window_end"],
+                fragment_len_min=kwargs["fragment_len_min"],
+                fragment_len_max=kwargs["fragment_len_max"],
+                scale="no",
+                sigma=0,
+            )
+
+        def fake_plot_count_matrix(matrix, title=None, figsize=None, **kwargs):
+            captured["title"] = title
+            captured["figsize"] = figsize
+            return DummyFigure()
+
+        with mock.patch.object(plot_module, "get_partner_filtered_count_matrix", side_effect=fake_get_partner_filtered_count_matrix), mock.patch.object(
+            plot_module,
+            "plot_count_matrix",
+            side_effect=fake_plot_count_matrix,
+        ):
+            result = plot_module.main(
+                [
+                    "-i",
+                    str(counts_file),
+                    "--pairs",
+                    str(pairs_path),
+                    "-o",
+                    "dummy.png",
+                    "-r",
+                    "chr8:23237000-23238000",
+                    "--partner-region",
+                    "E1=chr8:23237000-23238000",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(captured["title"], "Partner in E1")
+        self.assertEqual(captured["figsize"], (10.0, 1.5))
 
 
 class TestPartnerFilteredMatrix(unittest.TestCase):

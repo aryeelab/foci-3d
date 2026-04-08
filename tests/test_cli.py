@@ -54,6 +54,7 @@ class TestCliHelp(unittest.TestCase):
         self.assertIn("Render a footprint heatmap image", result.stdout)
         self.assertIn("--pairs", result.stdout)
         self.assertIn("--partner-region", result.stdout)
+        self.assertIn("NAME=chr:start-end", result.stdout)
         self.assertIn("--track-title", result.stdout)
         self.assertIn("--scale-max", result.stdout)
         self.assertIn("--gene-track", result.stdout)

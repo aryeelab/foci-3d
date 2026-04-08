@@ -77,7 +77,18 @@ foci-3d plot \
   --partner-region chr8:23237500-23238500
 ```
 
-For multi-track partner-filtered plots, repeat `--pairs` once per `--input`, in the same order:
+Optional labels can be attached to partner regions and will be used in panel titles:
+
+```bash
+foci-3d plot \
+  -i test.counts.tsv.gz \
+  --pairs test.pairs.gz \
+  -o test_partner_labeled.png \
+  -r chr8:23237000-23238000 \
+  --partner-region E1=chr8:23237500-23238500
+```
+
+For multi-sample partner-filtered plots, repeat `--pairs` once per `--input`, in the same order:
 
 ```bash
 foci-3d plot \
@@ -89,7 +100,8 @@ foci-3d plot \
   --track-title KD \
   -o test_partner_multi.png \
   -r chr8:23237000-23238000 \
-  --partner-region chr8:23237500-23238500
+  --partner-region E1=chr8:23237500-23238500 \
+  --partner-region E2=chr8:23239000-23240000
 ```
 
 Partner-region semantics:
@@ -97,6 +109,7 @@ Partner-region semantics:
 - The heatmap counts anchor fragments whose midpoints fall in `--region`.
 - The partner filter is applied to the partner fragment midpoint in `--partner-region`.
 - One pair may contribute two observations if both ends satisfy the anchor rule.
+- Labels in `NAME=chr:start-end` are display-only aliases used in panel titles.
 
 
 #### Gene annotation tracks
