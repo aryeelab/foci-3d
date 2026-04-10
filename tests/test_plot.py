@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from helpers import REPO_ROOT, require_external_tools, subprocess_env
 from foci3d import plot as plot_module
 from foci3d.footprinting import (
+    _auto_fragment_length_ticks,
     _default_vmax,
     get_count_matrix,
     get_partner_filtered_count_matrix,
@@ -20,6 +21,15 @@ from foci3d.footprinting import (
     plot_count_matrices,
     read_gene_annotation_track,
 )
+
+
+class TestPlotHelpers(unittest.TestCase):
+    def test_auto_fragment_length_ticks_expand_spacing_for_short_panels(self):
+        ticks = _auto_fragment_length_ticks(25, 150, panel_height_inches=1.2).tolist()
+        self.assertLessEqual(len(ticks), 3)
+        self.assertGreaterEqual(len(ticks), 2)
+        self.assertTrue(all(b > a for a, b in zip(ticks, ticks[1:])))
+        self.assertTrue(all((b - a) >= 50 for a, b in zip(ticks, ticks[1:])))
 
 
 class TestPlotCommand(unittest.TestCase):

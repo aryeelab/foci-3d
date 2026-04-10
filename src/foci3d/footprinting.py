@@ -1133,6 +1133,45 @@ def _auto_xtick_spacing(start_bp, end_bp, fig_width_inches):
     return _nice_bp_spacing(raw_spacing)
 
 
+def _nice_fragment_length_spacing(raw_spacing):
+    """
+    Round a raw fragment-length tick spacing up to a human-friendly interval.
+    """
+    raw_spacing = max(1, int(np.ceil(raw_spacing)))
+    magnitude = 10 ** int(np.floor(np.log10(raw_spacing)))
+    normalized = raw_spacing / magnitude
+    if normalized <= 1:
+        nice = 1
+    elif normalized <= 2:
+        nice = 2
+    elif normalized <= 2.5:
+        nice = 2.5
+    elif normalized <= 5:
+        nice = 5
+    else:
+        nice = 10
+    return int(nice * magnitude)
+
+
+def _auto_fragment_length_ticks(start_len, end_len, panel_height_inches):
+    """
+    Choose readable fragment-length tick values for the available panel height.
+    """
+    span = max(1, int(end_len) - int(start_len))
+    usable_height = max(float(panel_height_inches) - 0.2, 0.75)
+    estimated_label_height = 0.4
+    max_ticks = max(2, int(np.floor(usable_height / estimated_label_height)))
+    raw_spacing = span / max_ticks
+    spacing = _nice_fragment_length_spacing(raw_spacing)
+    first_tick = int(np.ceil(start_len / spacing) * spacing)
+    tick_values = np.arange(first_tick, end_len + 1, spacing, dtype=int)
+    if tick_values.size == 0:
+        tick_values = np.array([int(start_len), int(end_len)], dtype=int)
+    elif tick_values.size == 1 and not int(tick_values[0]) == int(end_len):
+        tick_values = np.array([int(tick_values[0]), int(end_len)], dtype=int)
+    return np.unique(tick_values)
+
+
 def _open_text_file(path):
     if str(path).endswith(".gz"):
         return gzip.open(path, "rt")
@@ -1761,9 +1800,8 @@ def plot_count_matrix(
             ax_heat.scatter(x_coords, y_coords, marker=blob_marker,
                            color=blob_color, s=blob_size, zorder=10)
 
-    # Y-axis ticks every 20, then invert so largest at top
     start_len, end_len = mat_plot.index.min(), mat_plot.index.max()
-    ytick_vals = np.arange(20 * (start_len // 20 + 1), end_len + 1, 20)
+    ytick_vals = _auto_fragment_length_ticks(start_len, end_len, panel_height_inches=float(figsize[1]))
     ytick_pos = ytick_vals - start_len
     mask_y = (ytick_pos >= 0) & (ytick_pos < mat_plot.shape[0])
     ax_heat.set_yticks(ytick_pos[mask_y])
@@ -1904,6 +1942,7 @@ def plot_count_matrices(
     height_ratios = [3] * num_heatmaps
     if has_gene_track:
         height_ratios.append(max(0.5, float(gene_height)))
+    heatmap_panel_height = float(figsize[1]) * (3.0 / sum(height_ratios))
     gs = gridspec.GridSpec(
         num_heatmaps + (1 if has_gene_track else 0),
         2,
@@ -1957,7 +1996,7 @@ def plot_count_matrices(
                 ax_heat.scatter(x_coords, y_coords, marker=blob_marker, color=blob_color, s=blob_size, zorder=10)
 
         start_len, end_len = mat_plot.index.min(), mat_plot.index.max()
-        ytick_vals = np.arange(20 * (start_len // 20 + 1), end_len + 1, 20)
+        ytick_vals = _auto_fragment_length_ticks(start_len, end_len, panel_height_inches=heatmap_panel_height)
         ytick_pos = ytick_vals - start_len
         mask_y = (ytick_pos >= 0) & (ytick_pos < mat_plot.shape[0])
         ax_heat.set_yticks(ytick_pos[mask_y])
