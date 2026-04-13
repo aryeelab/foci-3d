@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import defaultdict, Counter
 import matplotlib.gridspec as gridspec
+from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Rectangle
 import os
 import re
@@ -21,6 +22,27 @@ from skimage.measure import regionprops
 import multiprocessing
 from joblib import Parallel, delayed
 from tqdm import tqdm
+
+
+# Approximate the R `scico::scale_fill_scico(palette = "vik")` palette used in
+# the Noah/Corri footprint figures when `cmcrameri` is not installed.
+_DEFAULT_HEATMAP_COLORS = [
+    "#001260",
+    "#08306b",
+    "#1d5aa6",
+    "#5b8ec1",
+    "#c9d8e6",
+    "#f7f7f7",
+    "#f3d6c6",
+    "#c97a52",
+    "#8c2d04",
+    "#4d0000",
+]
+DEFAULT_HEATMAP_CMAP = LinearSegmentedColormap.from_list(
+    "foci_vik_approx",
+    _DEFAULT_HEATMAP_COLORS,
+    N=256,
+)
 
 
 def _parse_position(pos_str):
@@ -1751,7 +1773,7 @@ def plot_count_matrix(
     ax_cbar = fig.add_subplot(gs[0, 1])
     sns.heatmap(
         mat_plot,
-        cmap='magma',
+        cmap=DEFAULT_HEATMAP_CMAP,
         ax=ax_heat,
         cbar_ax=ax_cbar,
         vmin=vmin_plot,
@@ -1962,7 +1984,7 @@ def plot_count_matrices(
 
         sns.heatmap(
             mat_plot,
-            cmap='magma',
+            cmap=DEFAULT_HEATMAP_CMAP,
             ax=ax_heat,
             cbar_ax=ax_cbar,
             vmin=vmin_plot,
