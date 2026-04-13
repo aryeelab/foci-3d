@@ -64,6 +64,12 @@ foci-3d plot \
   --title "Gene X promoter"
 ```
 
+By default, multi-panel plots use `--norm nucleosome-median`, which rescales each panel to match the reference panel at the median signal of its peak fragment-length row. `--norm nucleosome-mean` uses the mean instead, and `--norm none` disables panel-to-panel normalization.
+
+Figure sizing now uses the final output dimensions. `--fig-width` sets the final figure width in inches, `--fig-height` sets the final figure height in inches, and if `--fig-height` is omitted it defaults to half of the final width. If `--fig-width` is omitted, the default width is derived from `--aspect-ratio` using the legacy 1.5-inch panel height.
+
+Plot text now uses a larger default base size, and you can adjust it with `--font-size`.
+
 See `foci-3d plot --help` for complete options.
 
 Example: Plot a region while keeping only anchor fragments whose partner fragment midpoint falls in a second interval:
@@ -110,6 +116,41 @@ Partner-region semantics:
 - The partner filter is applied to the partner fragment midpoint in `--partner-region`.
 - One pair may contribute two observations if both ends satisfy the anchor rule.
 - Labels in `NAME=chr:start-end` are display-only aliases used in panel titles.
+- Partner-region plots include an `All fragments` panel first, and `--norm nucleosome-median` or `--norm nucleosome-mean` normalizes each partner-restricted panel to that reference for the same track.
+
+### 4. Summarize fragment-length QC across samples
+
+Generate a fragment-length distribution plot and summary metrics directly from one or more `counts.tsv.gz` files:
+
+```bash
+foci-3d qc \
+  sample1.counts.tsv.gz \
+  sample2.counts.tsv.gz \
+  --region-bed targets.bed \
+  -o results/my_qc
+```
+
+This writes:
+
+- `results/my_qc_foci_fragment_length_dist.png`
+- `results/my_qc_foci_fragment_metrics.tsv`
+
+By default, `foci-3d qc` estimates these summaries from sampled genomic windows to stay practical on large inputs:
+
+- `--sample-windows 1000`
+- `--window-size-bp 10000`
+- `--seed 123`
+
+Use `--sample-windows all` to disable sampling and scan the full analysis domain exactly. If `--region-bed` is omitted, the command uses the span covered by the observed records in each counts file. If `--sample-name` is omitted, sample names are inferred from `SAMPLE_NAME.counts.tsv.gz`.
+
+The metrics table reports:
+
+- genomic span and number of windows analyzed
+- number and percent of fragments `<=80 bp`
+- fraction of zero windows for fragments `<=80 bp`
+- median nonzero fragment density per kb for fragments `<=80 bp`
+
+See `foci-3d qc --help` for complete options.
 
 
 #### Gene annotation tracks
@@ -165,6 +206,7 @@ foci-3d --help
 foci-3d parse --help
 foci-3d count --help
 foci-3d plot --help
+foci-3d qc --help
 ```
 
 ### Parsing pairs: If you want more control

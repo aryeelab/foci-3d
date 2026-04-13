@@ -6,13 +6,14 @@ import argparse
 import sys
 
 from . import __version__
-from . import count, detect, parse, plot
+from . import count, detect, parse, plot, qc
 
 COMMANDS = {
     "parse": parse,
     "count": count,
     "detect": detect,
     "plot": plot,
+    "qc": qc,
 }
 
 
@@ -39,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  count   Convert .pairs or .pairs.gz input to tabix-indexed counts")
         print("  detect  Detect footprints from counts matrices")
         print("  plot    Render a footprint heatmap image from counts data")
+        print("  qc      Compute multi-sample fragment-length QC summaries and plots")
         return 0
 
     if argv[0].startswith("-"):

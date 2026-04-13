@@ -25,6 +25,7 @@ class TestCliHelp(unittest.TestCase):
         self.assertIn("count", result.stdout)
         self.assertIn("detect", result.stdout)
         self.assertIn("plot", result.stdout)
+        self.assertIn("qc", result.stdout)
 
     def test_top_level_version(self):
         result = self.run_cli("--version")
@@ -54,12 +55,26 @@ class TestCliHelp(unittest.TestCase):
         self.assertIn("Render a footprint heatmap image", result.stdout)
         self.assertIn("--pairs", result.stdout)
         self.assertIn("--partner-region", result.stdout)
+        self.assertIn("--norm", result.stdout)
+        self.assertIn("nucleosome-mean", result.stdout)
+        self.assertIn("nucleosome-median", result.stdout)
+        self.assertIn("--aspect-ratio", result.stdout)
+        self.assertIn("--fig-height", result.stdout)
+        self.assertIn("--pixel-width", result.stdout)
+        self.assertIn("--font-size", result.stdout)
         self.assertIn("NAME=chr:start-end", result.stdout)
         self.assertIn("--track-title", result.stdout)
         self.assertIn("--scale-max", result.stdout)
         self.assertIn("--gene-track", result.stdout)
         self.assertIn("--gene-format", result.stdout)
         self.assertIn("--gene-annotation-mode", result.stdout)
+
+    def test_qc_help(self):
+        result = self.run_cli("qc", "--help")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("fragment-length QC", result.stdout)
+        self.assertIn("--sample-windows", result.stdout)
+        self.assertIn("--region-bed", result.stdout)
 
     def test_python_import(self):
         result = subprocess.run(
