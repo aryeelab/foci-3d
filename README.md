@@ -169,3 +169,59 @@ pip install -e .
 python tests/run_tests.py
 foci-3d -h
 ```
+
+## Normalization Choices
+
+FOCI-3D supports three normalization modes when rendering footprint heatmaps:
+
+```bash
+--scale no
+--scale by_fragment_length
+--scale yes
+```
+
+### Scale Factor Calculation
+
+Fragment-length scale factors are computed and stored in the header of the resulting `counts.tsv.gz` file.
+
+For each chromosome, genomic positions are grouped into **valid segments**. Positions separated by gaps larger than 5 kb are treated as belonging to different segments (`gap_thresh=5000`). The total number of valid bases is calculated as the sum of segment lengths across all valid segments.
+
+For each fragment length, counts are summed across all valid positions. The chromosome-specific scale factor is then calculated as:
+
+```text
+scale_factor(fragment_length) = total_count(fragment_length) / total_valid_bases
+```
+
+This quantity can be interpreted as the **average count per valid base for a given fragment length**.
+
+The final scale factor for each fragment length is obtained by averaging chromosome-specific values across chromosomes.
+
+#### `--scale no`
+
+No fragment-length normalization is applied.
+
+This mode uses the raw count matrix + Gaussian smoothing.
+
+#### `--scale by_fragment_length`
+
+Each fragment length is normalized using its own scale factor.
+
+```text
+output(fragment_length) = count(fragment_length) / scale_factor(fragment_length)
+```
+This mode performs fragment-length-specific normalization.
+
+#### `--scale yes`
+
+This mode applies a simplified fragment-length normalization strategy.
+
+First, the most common fragment length is identified as the fragment length with the largest scale factor.   
+All fragment lengths shorter than this value are normalized using the average scale factor across all shorter fragment lengths. Fragment lengths equal to or greater than the most common fragment length are normalized using the scale factor of the most common fragment length itself.
+
+This approach provides a compromise between no normalization and full fragment-length-specific normalization.
+
+> **Note**
+>
+> All normalization modes are sample-specific.  
+> The most common fragment length is determined independently for each sample, so the threshold used by `--scale yes` may differ between samples.
+> 
