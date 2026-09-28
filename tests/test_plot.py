@@ -9,12 +9,16 @@ from unittest import mock
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 from helpers import REPO_ROOT, require_external_tools, subprocess_env
 from foci3d import plot as plot_module
 from foci3d.footprinting import (
     _auto_fragment_length_ticks,
+    _auto_xtick_spacing,
     _default_vmax,
+    _multi_panel_hspace,
     get_count_matrix,
     get_partner_filtered_count_matrix,
     plot_count_matrix,
@@ -23,13 +27,17 @@ from foci3d.footprinting import (
 )
 
 
+def _heat_axes(figure):
+    return [ax for ax in figure.axes if ax.get_ylabel() != "Count" and ax.collections]
+
+
 class TestPlotHelpers(unittest.TestCase):
     def test_auto_fragment_length_ticks_expand_spacing_for_short_panels(self):
-        ticks = _auto_fragment_length_ticks(25, 150, panel_height_inches=1.2).tolist()
+        ticks = _auto_fragment_length_ticks(25, 150, panel_height_inches=1.2, font_size=16)
         self.assertLessEqual(len(ticks), 3)
         self.assertGreaterEqual(len(ticks), 2)
-        self.assertTrue(all(b > a for a, b in zip(ticks, ticks[1:])))
-        self.assertTrue(all((b - a) >= 50 for a, b in zip(ticks, ticks[1:])))
+        self.assertTrue(np.all(np.diff(ticks) > 0))
+        self.assertGreaterEqual(int(np.min(np.diff(ticks))), 50)
 
 
 class TestPlotCommand(unittest.TestCase):
@@ -324,19 +332,21 @@ class TestPlotCommand(unittest.TestCase):
             )
 
         self.assertEqual(result, 0)
-        self.assertEqual(captured["num_matrices"], 4)
+        self.assertEqual(captured["num_matrices"], 6)
         self.assertEqual(
             captured["track_titles"],
             [
+                "Track A | All fragments",
+                "Track B | All fragments",
                 "Track A | Partner in E1",
                 "Track B | Partner in E1",
                 "Track A | Partner in E2",
                 "Track B | Partner in E2",
             ],
         )
-        self.assertEqual(captured["figsize"], (10.0, 6.0))
+        self.assertEqual(captured["figsize"], (12.0, 6.0))
 
-    def test_plot_with_single_input_labeled_partner_region_uses_partner_title(self):
+    def test_plot_with_single_input_labeled_partner_region_includes_all_fragments_panel(self):
         counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
         pairs_path = REPO_ROOT / "tests" / "data" / "mesc_microc_test.pairs.gz"
         captured = {}
@@ -357,15 +367,16 @@ class TestPlotCommand(unittest.TestCase):
                 sigma=0,
             )
 
-        def fake_plot_count_matrix(matrix, title=None, figsize=None, **kwargs):
-            captured["title"] = title
+        def fake_plot_count_matrices(matrices, track_titles=None, figsize=None, **kwargs):
+            captured["num_matrices"] = len(matrices)
+            captured["track_titles"] = track_titles
             captured["figsize"] = figsize
             return DummyFigure()
 
         with mock.patch.object(plot_module, "get_partner_filtered_count_matrix", side_effect=fake_get_partner_filtered_count_matrix), mock.patch.object(
             plot_module,
-            "plot_count_matrix",
-            side_effect=fake_plot_count_matrix,
+            "plot_count_matrices",
+            side_effect=fake_plot_count_matrices,
         ):
             result = plot_module.main(
                 [
@@ -383,8 +394,404 @@ class TestPlotCommand(unittest.TestCase):
             )
 
         self.assertEqual(result, 0)
-        self.assertEqual(captured["title"], "Partner in E1")
-        self.assertEqual(captured["figsize"], (10.0, 1.5))
+        self.assertEqual(captured["num_matrices"], 2)
+        self.assertEqual(captured["track_titles"], ["All fragments", "Partner in E1"])
+        self.assertEqual(captured["figsize"], (12.0, 6.0))
+
+    def test_plot_fig_width_defaults_from_aspect_ratio(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        captured = {}
+
+        class DummyFigure:
+            def savefig(self, *args, **kwargs):
+                return None
+
+        def fake_plot_count_matrix(matrix, title=None, figsize=None, **kwargs):
+            captured["figsize"] = figsize
+            return DummyFigure()
+
+        with mock.patch.object(plot_module, "plot_count_matrix", side_effect=fake_plot_count_matrix):
+            result = plot_module.main(
+                [
+                    "-i",
+                    str(counts_file),
+                    "-o",
+                    "dummy.png",
+                    "-r",
+                    "chr8:23237000-23238000",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(captured["figsize"], (12.0, 6.0))
+
+    def test_plot_fig_width_override_beats_aspect_ratio(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        captured = {}
+
+        class DummyFigure:
+            def savefig(self, *args, **kwargs):
+                return None
+
+        def fake_plot_count_matrix(matrix, title=None, figsize=None, **kwargs):
+            captured["figsize"] = figsize
+            return DummyFigure()
+
+        with mock.patch.object(plot_module, "plot_count_matrix", side_effect=fake_plot_count_matrix):
+            result = plot_module.main(
+                [
+                    "-i",
+                    str(counts_file),
+                    "-o",
+                    "dummy.png",
+                    "-r",
+                    "chr8:23237000-23238000",
+                    "--fig-width",
+                    "14",
+                    "--aspect-ratio",
+                    "20",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(captured["figsize"], (14.0, 7.0))
+
+    def test_plot_fig_height_sets_total_figure_height(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        captured = {}
+
+        class DummyFigure:
+            def savefig(self, *args, **kwargs):
+                return None
+
+        def fake_plot_count_matrix(matrix, title=None, figsize=None, **kwargs):
+            captured["figsize"] = figsize
+            return DummyFigure()
+
+        with mock.patch.object(plot_module, "plot_count_matrix", side_effect=fake_plot_count_matrix):
+            result = plot_module.main(
+                [
+                    "-i",
+                    str(counts_file),
+                    "-o",
+                    "dummy.png",
+                    "-r",
+                    "chr8:23237000-23238000",
+                    "--fig-width",
+                    "10",
+                    "--fig-height",
+                    "8",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(captured["figsize"], (10.0, 8.0))
+
+    def test_plot_font_size_is_forwarded(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        captured = {}
+
+        class DummyFigure:
+            def savefig(self, *args, **kwargs):
+                return None
+
+        def fake_plot_count_matrix(matrix, title=None, figsize=None, **kwargs):
+            captured["font_size"] = kwargs["font_size"]
+            return DummyFigure()
+
+        with mock.patch.object(plot_module, "plot_count_matrix", side_effect=fake_plot_count_matrix):
+            result = plot_module.main(
+                [
+                    "-i",
+                    str(counts_file),
+                    "-o",
+                    "dummy.png",
+                    "-r",
+                    "chr8:23237000-23238000",
+                    "--font-size",
+                    "24",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(captured["font_size"], 24.0)
+
+    def test_plot_pixel_width_overrides_dpi(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        captured = {}
+
+        class DummyFigure:
+            def savefig(self, *args, **kwargs):
+                captured["dpi"] = kwargs["dpi"]
+                return None
+
+        def fake_plot_count_matrix(matrix, title=None, figsize=None, **kwargs):
+            captured["figsize"] = figsize
+            return DummyFigure()
+
+        with mock.patch.object(plot_module, "plot_count_matrix", side_effect=fake_plot_count_matrix):
+            result = plot_module.main(
+                [
+                    "-i",
+                    str(counts_file),
+                    "-o",
+                    "dummy.png",
+                    "-r",
+                    "chr8:23237000-23238000",
+                    "--pixel-width",
+                    "5000",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(captured["figsize"], (12.0, 6.0))
+        self.assertAlmostEqual(captured["dpi"], 5000 / 12.0)
+
+    def test_plot_partner_region_scales_partner_panels_to_all_fragments_nucleosome_median(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        pairs_path = REPO_ROOT / "tests" / "data" / "mesc_microc_test.pairs.gz"
+        captured = {}
+
+        class DummyFigure:
+            def savefig(self, *args, **kwargs):
+                return None
+
+        all_fragments_matrix = pd.DataFrame(
+            {
+                100: [1.0, 4.0],
+                101: [1.0, 6.0],
+            },
+            index=[25, 26],
+        )
+        partner_matrix = pd.DataFrame(
+            {
+                100: [2.0, 1.0],
+                101: [2.0, 3.0],
+            },
+            index=[25, 26],
+        )
+
+        def fake_get_count_matrix(**kwargs):
+            return all_fragments_matrix.copy(), pd.Series(dtype=float)
+
+        def fake_get_partner_filtered_count_matrix(**kwargs):
+            return partner_matrix.copy(), pd.Series(dtype=float)
+
+        def fake_plot_count_matrices(matrices, track_titles=None, figsize=None, **kwargs):
+            captured["matrices"] = matrices
+            captured["track_titles"] = track_titles
+            return DummyFigure()
+
+        with mock.patch.object(plot_module, "get_count_matrix", side_effect=fake_get_count_matrix), mock.patch.object(
+            plot_module,
+            "get_partner_filtered_count_matrix",
+            side_effect=fake_get_partner_filtered_count_matrix,
+        ), mock.patch.object(
+            plot_module,
+            "plot_count_matrices",
+            side_effect=fake_plot_count_matrices,
+        ):
+            result = plot_module.main(
+                [
+                    "-i",
+                    str(counts_file),
+                    "--pairs",
+                    str(pairs_path),
+                    "-o",
+                    "dummy.png",
+                    "-r",
+                    "chr8:23237000-23238000",
+                    "--partner-region",
+                    "E1=chr8:23237000-23238000",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(captured["track_titles"], ["All fragments", "Partner in E1"])
+        scaled_partner_matrix = captured["matrices"][1]
+        self.assertEqual(float(all_fragments_matrix.loc[26].median()), 5.0)
+        self.assertEqual(float(partner_matrix.loc[26].median()), 2.0)
+        self.assertAlmostEqual(float(scaled_partner_matrix.loc[26].median()), 5.0)
+        self.assertAlmostEqual(float(scaled_partner_matrix.loc[25].iloc[0]), 5.0)
+        self.assertAlmostEqual(float(scaled_partner_matrix.loc[25].iloc[1]), 5.0)
+
+    def test_plot_multiple_inputs_use_nucleosome_median_norm_by_default(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        captured = {}
+
+        class DummyFigure:
+            def savefig(self, *args, **kwargs):
+                return None
+
+        first_matrix = pd.DataFrame(
+            {
+                100: [1.0, 6.0],
+                101: [1.0, 8.0],
+            },
+            index=[25, 26],
+        )
+        second_matrix = pd.DataFrame(
+            {
+                100: [1.0, 2.0],
+                101: [1.0, 4.0],
+            },
+            index=[25, 26],
+        )
+        call_count = {"value": 0}
+
+        def fake_get_count_matrix(**kwargs):
+            call_count["value"] += 1
+            if call_count["value"] == 1:
+                return first_matrix.copy(), pd.Series(dtype=float)
+            return second_matrix.copy(), pd.Series(dtype=float)
+
+        def fake_plot_count_matrices(matrices, track_titles=None, figsize=None, **kwargs):
+            captured["matrices"] = matrices
+            return DummyFigure()
+
+        with mock.patch.object(plot_module, "get_count_matrix", side_effect=fake_get_count_matrix), mock.patch.object(
+            plot_module,
+            "plot_count_matrices",
+            side_effect=fake_plot_count_matrices,
+        ):
+            result = plot_module.main(
+                [
+                    "-i",
+                    str(counts_file),
+                    "-i",
+                    str(counts_file),
+                    "-o",
+                    "dummy.png",
+                    "-r",
+                    "chr8:23237000-23238000",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        scaled_second_matrix = captured["matrices"][1]
+        self.assertAlmostEqual(float(first_matrix.loc[26].median()), 7.0)
+        self.assertAlmostEqual(float(second_matrix.loc[26].median()), 3.0)
+        self.assertAlmostEqual(float(scaled_second_matrix.loc[26].median()), 7.0)
+
+    def test_plot_nucleosome_mean_norm_matches_reference_mean(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        captured = {}
+
+        class DummyFigure:
+            def savefig(self, *args, **kwargs):
+                return None
+
+        first_matrix = pd.DataFrame(
+            {
+                100: [1.0, 6.0],
+                101: [1.0, 10.0],
+                102: [1.0, 14.0],
+            },
+            index=[25, 26],
+        )
+        second_matrix = pd.DataFrame(
+            {
+                100: [1.0, 2.0],
+                101: [1.0, 8.0],
+                102: [1.0, 8.0],
+            },
+            index=[25, 26],
+        )
+        call_count = {"value": 0}
+
+        def fake_get_count_matrix(**kwargs):
+            call_count["value"] += 1
+            if call_count["value"] == 1:
+                return first_matrix.copy(), pd.Series(dtype=float)
+            return second_matrix.copy(), pd.Series(dtype=float)
+
+        def fake_plot_count_matrices(matrices, track_titles=None, figsize=None, **kwargs):
+            captured["matrices"] = matrices
+            return DummyFigure()
+
+        with mock.patch.object(plot_module, "get_count_matrix", side_effect=fake_get_count_matrix), mock.patch.object(
+            plot_module,
+            "plot_count_matrices",
+            side_effect=fake_plot_count_matrices,
+        ):
+            result = plot_module.main(
+                [
+                    "-i",
+                    str(counts_file),
+                    "-i",
+                    str(counts_file),
+                    "-o",
+                    "dummy.png",
+                    "-r",
+                    "chr8:23237000-23238000",
+                    "--norm",
+                    "nucleosome-mean",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        scaled_second_matrix = captured["matrices"][1]
+        self.assertAlmostEqual(float(first_matrix.loc[26].mean()), 10.0)
+        self.assertAlmostEqual(float(second_matrix.loc[26].mean()), 6.0)
+        self.assertAlmostEqual(float(scaled_second_matrix.loc[26].mean()), 10.0)
+
+    def test_plot_norm_none_leaves_multi_input_panels_unchanged(self):
+        counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        captured = {}
+
+        class DummyFigure:
+            def savefig(self, *args, **kwargs):
+                return None
+
+        first_matrix = pd.DataFrame(
+            {
+                100: [1.0, 6.0],
+                101: [1.0, 8.0],
+            },
+            index=[25, 26],
+        )
+        second_matrix = pd.DataFrame(
+            {
+                100: [1.0, 2.0],
+                101: [1.0, 4.0],
+            },
+            index=[25, 26],
+        )
+        call_count = {"value": 0}
+
+        def fake_get_count_matrix(**kwargs):
+            call_count["value"] += 1
+            if call_count["value"] == 1:
+                return first_matrix.copy(), pd.Series(dtype=float)
+            return second_matrix.copy(), pd.Series(dtype=float)
+
+        def fake_plot_count_matrices(matrices, track_titles=None, figsize=None, **kwargs):
+            captured["matrices"] = matrices
+            return DummyFigure()
+
+        with mock.patch.object(plot_module, "get_count_matrix", side_effect=fake_get_count_matrix), mock.patch.object(
+            plot_module,
+            "plot_count_matrices",
+            side_effect=fake_plot_count_matrices,
+        ):
+            result = plot_module.main(
+                [
+                    "-i",
+                    str(counts_file),
+                    "-i",
+                    str(counts_file),
+                    "-o",
+                    "dummy.png",
+                    "-r",
+                    "chr8:23237000-23238000",
+                    "--norm",
+                    "none",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        unchanged_second_matrix = captured["matrices"][1]
+        pd.testing.assert_frame_equal(unchanged_second_matrix, second_matrix)
 
 
 class TestPartnerFilteredMatrix(unittest.TestCase):
@@ -540,7 +947,7 @@ class TestGeneTrackHelpers(unittest.TestCase):
         track_axes = [ax for ax in figure.axes if ax.get_ylabel() == "Genes"]
         self.assertEqual(len(track_axes), 1)
         gene_ax = track_axes[0]
-        heat_ax = next(ax for ax in figure.axes if ax.get_ylabel() == "Fragment Length")
+        heat_ax = _heat_axes(figure)[0]
         self.assertEqual([tick.get_text() for tick in heat_ax.get_xticklabels()], [])
         self.assertIn("23,237,500", [tick.get_text() for tick in gene_ax.get_xticklabels()])
         plt.close(figure)
@@ -563,7 +970,7 @@ class TestGeneTrackHelpers(unittest.TestCase):
             x_axis_label="Chr8 Position (bp)",
             return_fig=True,
         )
-        heat_ax = next(ax for ax in figure.axes if ax.get_ylabel() == "Fragment Length")
+        heat_ax = _heat_axes(figure)[0]
         self.assertEqual(heat_ax.get_xlabel(), "Chr8 Position (bp)")
         plt.close(figure)
 
@@ -605,12 +1012,14 @@ class TestGeneTrackHelpers(unittest.TestCase):
             xtick_spacing=500,
             return_fig=True,
         )
-        heat_axes = [ax for ax in figure.axes if ax.get_ylabel() == "Fragment Length"]
+        heat_axes = _heat_axes(figure)
         self.assertEqual(len(heat_axes), 2)
         self.assertEqual([tick.get_text() for tick in heat_axes[0].get_xticklabels()], [])
         self.assertEqual([tick.get_text() for tick in heat_axes[1].get_xticklabels()], [])
+        self.assertTrue(all(ax.get_ylabel() == "" for ax in heat_axes))
         gene_ax = next(ax for ax in figure.axes if ax.get_ylabel() == "Genes")
         self.assertIn("23,237,500", [tick.get_text() for tick in gene_ax.get_xticklabels()])
+        self.assertEqual(sum(text.get_text() == "Fragment Length" for text in figure.texts), 1)
         plt.close(figure)
 
     def test_plot_count_matrices_auto_scale_max_is_shared(self):
@@ -640,7 +1049,7 @@ class TestGeneTrackHelpers(unittest.TestCase):
             track_titles=["Track A", "Track B"],
             return_fig=True,
         )
-        heat_axes = [ax for ax in figure.axes if ax.get_ylabel() == "Fragment Length"]
+        heat_axes = _heat_axes(figure)
         resolved_vmax_values = [ax.collections[0].norm.vmax for ax in heat_axes]
         expected_vmax = max(_default_vmax(matrix_a), _default_vmax(matrix_b))
         self.assertEqual(len(resolved_vmax_values), 2)
@@ -676,7 +1085,7 @@ class TestGeneTrackHelpers(unittest.TestCase):
             vmax=3.5,
             return_fig=True,
         )
-        heat_axes = [ax for ax in figure.axes if ax.get_ylabel() == "Fragment Length"]
+        heat_axes = _heat_axes(figure)
         resolved_vmax_values = [ax.collections[0].norm.vmax for ax in heat_axes]
         self.assertEqual(resolved_vmax_values, [3.5, 3.5])
         plt.close(figure)
@@ -709,10 +1118,21 @@ class TestGeneTrackHelpers(unittest.TestCase):
             vmax=[1.5, 2.5],
             return_fig=True,
         )
-        heat_axes = [ax for ax in figure.axes if ax.get_ylabel() == "Fragment Length"]
+        heat_axes = _heat_axes(figure)
         resolved_vmax_values = [ax.collections[0].norm.vmax for ax in heat_axes]
         self.assertEqual(resolved_vmax_values, [1.5, 2.5])
         plt.close(figure)
+
+    def test_auto_xtick_spacing_increases_with_font_size(self):
+        spacing_small = _auto_xtick_spacing(23237000, 23247000, 10, font_size=16)
+        spacing_large = _auto_xtick_spacing(23237000, 23247000, 10, font_size=64)
+        self.assertGreaterEqual(spacing_large, spacing_small)
+
+    def test_multi_panel_hspace_increases_with_font_size(self):
+        self.assertGreater(
+            _multi_panel_hspace(64, has_figure_title=True),
+            _multi_panel_hspace(16, has_figure_title=True),
+        )
 
     def test_plot_count_matrices_rejects_mismatched_scale_max_list(self):
         counts_file = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"

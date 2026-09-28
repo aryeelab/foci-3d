@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import defaultdict, Counter
 import matplotlib.gridspec as gridspec
-from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Rectangle
+from matplotlib.colors import LinearSegmentedColormap
 import os
 import re
 
@@ -1143,14 +1143,16 @@ def _nice_bp_spacing(raw_spacing):
     return int(nice * magnitude)
 
 
-def _auto_xtick_spacing(start_bp, end_bp, fig_width_inches):
+def _auto_xtick_spacing(start_bp, end_bp, fig_width_inches, font_size=16):
     """
     Choose a genomic tick spacing that keeps labels readable for the current span
     and figure width.
     """
     span_bp = max(1, end_bp - start_bp)
     usable_width = max(float(fig_width_inches) - 1.0, 2.0)
-    max_ticks = max(2, int(np.floor(usable_width / 1.5)))
+    max_label_chars = max(len(f"{start_bp:,}"), len(f"{end_bp:,}"))
+    estimated_label_width = ((float(font_size) / 72.0) * max_label_chars * 0.6) + 0.25
+    max_ticks = max(2, int(np.floor(usable_width / max(estimated_label_width, 0.75))))
     raw_spacing = span_bp / max_ticks
     return _nice_bp_spacing(raw_spacing)
 
@@ -1175,23 +1177,48 @@ def _nice_fragment_length_spacing(raw_spacing):
     return int(nice * magnitude)
 
 
-def _auto_fragment_length_ticks(start_len, end_len, panel_height_inches):
+def _auto_fragment_length_ticks(start_len, end_len, panel_height_inches, font_size=16):
     """
     Choose readable fragment-length tick values for the available panel height.
     """
     span = max(1, int(end_len) - int(start_len))
     usable_height = max(float(panel_height_inches) - 0.2, 0.75)
-    estimated_label_height = 0.4
+    estimated_label_height = max((float(font_size) / 72.0) * 1.8, 0.3)
     max_ticks = max(2, int(np.floor(usable_height / estimated_label_height)))
     raw_spacing = span / max_ticks
     spacing = _nice_fragment_length_spacing(raw_spacing)
     first_tick = int(np.ceil(start_len / spacing) * spacing)
     tick_values = np.arange(first_tick, end_len + 1, spacing, dtype=int)
+
     if tick_values.size == 0:
         tick_values = np.array([int(start_len), int(end_len)], dtype=int)
-    elif tick_values.size == 1 and not int(tick_values[0]) == int(end_len):
+    elif tick_values.size == 1 and int(tick_values[0]) != int(end_len):
         tick_values = np.array([int(tick_values[0]), int(end_len)], dtype=int)
+
     return np.unique(tick_values)
+
+
+def _apply_fragment_length_ticks(ax_heat, mat_plot, panel_height_inches, font_size=16):
+    start_len, end_len = mat_plot.index.min(), mat_plot.index.max()
+    ytick_vals = _auto_fragment_length_ticks(
+        start_len,
+        end_len,
+        panel_height_inches,
+        font_size=font_size,
+    )
+    ytick_pos = ytick_vals - start_len
+    mask_y = (ytick_pos >= 0) & (ytick_pos < mat_plot.shape[0])
+    ax_heat.set_yticks(ytick_pos[mask_y])
+    ax_heat.set_yticklabels(ytick_vals[mask_y])
+    ax_heat.invert_yaxis()
+
+
+def _panel_title_pad(font_size):
+    return max(6.0, float(font_size) * 0.4)
+
+
+def _multi_panel_hspace(font_size, has_figure_title=False):
+    return 0.28 + max(float(font_size) - 16.0, 0.0) / 160.0 + (0.04 if has_figure_title else 0.0)
 
 
 def _open_text_file(path):
@@ -1562,6 +1589,7 @@ def _draw_gene_annotation_track(
     xtick_positions,
     xtick_labels,
     x_axis_label="Position (bp)",
+    font_size=16,
 ):
     span_bp = end_bp - start_bp + 1
     packed_models, num_rows = _pack_gene_track_rows(gene_track)
@@ -1570,7 +1598,7 @@ def _draw_gene_annotation_track(
     label_margin = 0.08
     ax.set_xlim(0, span_bp)
     ax.set_ylim(num_rows, -label_offset - label_margin)
-    ax.set_ylabel("Genes")
+    ax.set_ylabel("Genes", fontsize=font_size)
     ax.set_yticks([])
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -1634,13 +1662,14 @@ def _draw_gene_annotation_track(
             model["label"],
             ha="left",
             va="bottom",
-            fontsize=8,
+            fontsize=font_size,
             clip_on=True,
         )
 
     ax.set_xticks(xtick_positions)
     ax.set_xticklabels(xtick_labels, rotation=0, ha="center")
-    ax.set_xlabel(x_axis_label)
+    ax.set_xlabel(x_axis_label, fontsize=font_size)
+    ax.tick_params(axis="x", labelsize=font_size)
 
 
 def _default_vmax(mat_plot):
@@ -1690,6 +1719,7 @@ def plot_count_matrix(
     aspect='auto',
     return_fig=False,
     x_axis_label="Position (bp)",
+    font_size=16,
 ):
     """
     Plot a heatmap of `mat` with optional bar-track(s) below,
@@ -1754,9 +1784,11 @@ def plot_count_matrix(
     total_track_panels = n_tracks + (1 if has_gene_track else 0)
     total_height_units = 3 + n_tracks + (float(gene_height) if has_gene_track else 0)
     effective_fig_height = float(figsize[1]) * (total_height_units / 3.0)
+    heatmap_panel_height = float(figsize[1])
     fig = plt.figure(figsize=(figsize[0], effective_fig_height))
-    # Increase hspace when named_positions are present to avoid overlap with tracks
+    # Increase hspace when named positions or larger fonts need more vertical clearance.
     hspace_value = 0.6 if (named_positions and total_track_panels > 0) else 0.3
+    hspace_value += max(float(font_size) - 16.0, 0.0) / 200.0
     height_ratios = [3] + [1] * n_tracks
     if has_gene_track:
         height_ratios.append(max(0.5, float(gene_height)))
@@ -1788,8 +1820,11 @@ def plot_count_matrix(
     ax_heat.xaxis.set_tick_params(bottom=False, labelbottom=False)
 
     ax_heat.set_aspect(aspect)
-    ax_heat.set_title(title)
-    ax_heat.set_ylabel('Fragment Length')
+    ax_heat.set_title(title, fontsize=font_size, pad=_panel_title_pad(font_size))
+    ax_heat.set_ylabel('Fragment Length', fontsize=font_size)
+    ax_heat.tick_params(axis='y', labelsize=font_size)
+    ax_cbar.set_ylabel('Count', fontsize=font_size)
+    ax_cbar.tick_params(axis='y', labelsize=font_size)
 
     # Plot blobs if provided
     if blobs is not None and not blobs.empty:
@@ -1822,13 +1857,12 @@ def plot_count_matrix(
             ax_heat.scatter(x_coords, y_coords, marker=blob_marker,
                            color=blob_color, s=blob_size, zorder=10)
 
-    start_len, end_len = mat_plot.index.min(), mat_plot.index.max()
-    ytick_vals = _auto_fragment_length_ticks(start_len, end_len, panel_height_inches=float(figsize[1]))
-    ytick_pos = ytick_vals - start_len
-    mask_y = (ytick_pos >= 0) & (ytick_pos < mat_plot.shape[0])
-    ax_heat.set_yticks(ytick_pos[mask_y])
-    ax_heat.set_yticklabels(ytick_vals[mask_y])
-    ax_heat.invert_yaxis()
+    _apply_fragment_length_ticks(
+        ax_heat,
+        mat_plot,
+        heatmap_panel_height,
+        font_size=font_size,
+    )
 
     # Annotate named positions just below the heatmap
     if named_positions:
@@ -1843,13 +1877,13 @@ def plot_count_matrix(
                 ax_heat.text(
                     x0, -0.14, lbl,
                     transform=ax_heat.get_xaxis_transform(),
-                    ha='center', va='top', color='red'
+                    ha='center', va='top', color='red', fontsize=font_size
                 )
 
     # Prepare x-ticks (shared by bottom track)
     xtick_spacing_plot = xtick_spacing
     if xtick_spacing_plot is None:
-        xtick_spacing_plot = _auto_xtick_spacing(start_bp, end_bp, figsize[0])
+        xtick_spacing_plot = _auto_xtick_spacing(start_bp, end_bp, figsize[0], font_size=font_size)
     first_tick = int(np.ceil(start_bp / xtick_spacing_plot) * xtick_spacing_plot)
     xtick_values = np.arange(first_tick, end_bp + 1, xtick_spacing_plot)
     xtick_positions = xtick_values - start_bp
@@ -1868,7 +1902,8 @@ def plot_count_matrix(
                 width=1,
                 align='edge'
             )
-            ax_tr.set_ylabel(label)
+            ax_tr.set_ylabel(label, fontsize=font_size)
+            ax_tr.tick_params(axis='y', labelsize=font_size)
             track_axes.append(ax_tr)
 
     if has_gene_track:
@@ -1881,6 +1916,7 @@ def plot_count_matrix(
             xtick_positions,
             xtick_labels,
             x_axis_label=x_axis_label,
+            font_size=font_size,
         )
         track_axes.append(gene_ax)
 
@@ -1892,14 +1928,16 @@ def plot_count_matrix(
         bottom_ax = track_axes[-1]
         bottom_ax.set_xticks(xtick_positions)
         bottom_ax.set_xticklabels(xtick_labels, rotation=0, ha='center')
-        bottom_ax.set_xlabel(x_axis_label)
+        bottom_ax.set_xlabel(x_axis_label, fontsize=font_size)
         bottom_ax.xaxis.set_tick_params(bottom=True, labelbottom=True)
+        bottom_ax.tick_params(axis='x', labelsize=font_size)
     else:
         # No tracks provided: show x-axis on the heatmap itself
         ax_heat.set_xticks(xtick_positions)
         ax_heat.set_xticklabels(xtick_labels, rotation=0, ha='center')
-        ax_heat.set_xlabel(x_axis_label)
+        ax_heat.set_xlabel(x_axis_label, fontsize=font_size)
         ax_heat.xaxis.set_tick_params(bottom=True, labelbottom=True)
+        ax_heat.tick_params(axis='x', labelsize=font_size)
 
     if return_fig:
         return fig
@@ -1926,6 +1964,7 @@ def plot_count_matrices(
     aspect='auto',
     return_fig=False,
     x_axis_label="Position (bp)",
+    font_size=16,
 ):
     """
     Plot multiple footprint heatmaps stacked vertically with a shared genomic x-axis
@@ -1950,7 +1989,7 @@ def plot_count_matrices(
     start_bp, end_bp = mats_plot[0].columns.min(), mats_plot[0].columns.max()
     xtick_spacing_plot = xtick_spacing
     if xtick_spacing_plot is None:
-        xtick_spacing_plot = _auto_xtick_spacing(start_bp, end_bp, figsize[0])
+        xtick_spacing_plot = _auto_xtick_spacing(start_bp, end_bp, figsize[0], font_size=font_size)
     first_tick = int(np.ceil(start_bp / xtick_spacing_plot) * xtick_spacing_plot)
     xtick_values = np.arange(first_tick, end_bp + 1, xtick_spacing_plot)
     xtick_positions = xtick_values - start_bp
@@ -1958,9 +1997,7 @@ def plot_count_matrices(
 
     num_heatmaps = len(mats_plot)
     has_gene_track = bool(gene_track)
-    total_height_units = 3 * num_heatmaps + (float(gene_height) if has_gene_track else 0)
-    effective_fig_height = float(figsize[1]) * (total_height_units / 3.0)
-    fig = plt.figure(figsize=(figsize[0], effective_fig_height))
+    fig = plt.figure(figsize=(figsize[0], figsize[1]))
     height_ratios = [3] * num_heatmaps
     if has_gene_track:
         height_ratios.append(max(0.5, float(gene_height)))
@@ -1971,7 +2008,7 @@ def plot_count_matrices(
         height_ratios=height_ratios,
         width_ratios=[1, 0.05],
         wspace=0.03,
-        hspace=0.3,
+        hspace=_multi_panel_hspace(font_size, has_figure_title=bool(title)),
     )
 
     track_titles = track_titles or [""] * num_heatmaps
@@ -1997,8 +2034,11 @@ def plot_count_matrices(
         ax_heat.set_xlabel('')
         ax_heat.xaxis.set_tick_params(bottom=False, labelbottom=False)
         ax_heat.set_aspect(aspect)
-        ax_heat.set_title(track_title)
-        ax_heat.set_ylabel('Fragment Length')
+        ax_heat.set_title(track_title, fontsize=font_size, pad=_panel_title_pad(font_size))
+        ax_heat.set_ylabel("")
+        ax_heat.tick_params(axis='y', labelsize=font_size)
+        ax_cbar.set_ylabel('Count', fontsize=font_size)
+        ax_cbar.tick_params(axis='y', labelsize=font_size)
 
         if blobs is not None and not blobs.empty:
             filtered_blobs = blobs.copy()
@@ -2017,17 +2057,20 @@ def plot_count_matrices(
             if x_coords and y_coords:
                 ax_heat.scatter(x_coords, y_coords, marker=blob_marker, color=blob_color, s=blob_size, zorder=10)
 
-        start_len, end_len = mat_plot.index.min(), mat_plot.index.max()
-        ytick_vals = _auto_fragment_length_ticks(start_len, end_len, panel_height_inches=heatmap_panel_height)
-        ytick_pos = ytick_vals - start_len
-        mask_y = (ytick_pos >= 0) & (ytick_pos < mat_plot.shape[0])
-        ax_heat.set_yticks(ytick_pos[mask_y])
-        ax_heat.set_yticklabels(ytick_vals[mask_y])
-        ax_heat.invert_yaxis()
+        _apply_fragment_length_ticks(
+            ax_heat,
+            mat_plot,
+            heatmap_panel_height,
+            font_size=font_size,
+        )
         heat_axes.append(ax_heat)
 
     if title:
-        fig.suptitle(title, y=0.995)
+        fig.suptitle(title, y=0.995, fontsize=font_size)
+    if hasattr(fig, "supylabel"):
+        fig.supylabel("Fragment Length", fontsize=font_size)
+    else:
+        fig.text(0.02, 0.5, "Fragment Length", va="center", rotation="vertical", fontsize=font_size)
 
     if has_gene_track:
         gene_ax = fig.add_subplot(gs[num_heatmaps, 0])
@@ -2039,13 +2082,15 @@ def plot_count_matrices(
             xtick_positions,
             xtick_labels,
             x_axis_label=x_axis_label,
+            font_size=font_size,
         )
     else:
         bottom_ax = heat_axes[-1]
         bottom_ax.set_xticks(xtick_positions)
         bottom_ax.set_xticklabels(xtick_labels, rotation=0, ha='center')
-        bottom_ax.set_xlabel(x_axis_label)
+        bottom_ax.set_xlabel(x_axis_label, fontsize=font_size)
         bottom_ax.xaxis.set_tick_params(bottom=True, labelbottom=True)
+        bottom_ax.tick_params(axis='x', labelsize=font_size)
 
     if return_fig:
         return fig
