@@ -281,6 +281,7 @@ def calculate_normalization_factors(counts_gz, chromosomes, gap_thresh=5000, out
 
 def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, sigma, min_size,
                              fragment_len_min, fragment_len_max, scale, num_cores,
+                             pad=200,
                              batch_size=1000, max_memory_gb=8.0, timing_stats=None, memory_profiling=False):
     """
     Memory-aware wrapper for detect_footprints that processes windows in batches.
@@ -296,7 +297,8 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
     all_windows = footprinting.get_valid_windows(
         counts_gz=counts_gz,
         chromosomes=chromosomes,
-        window_size=window_size
+        window_size=window_size,
+        window_overlap_bp=pad,
     )
 
     total_windows = len(all_windows)
@@ -423,6 +425,7 @@ def detect_footprints_batched(counts_gz, chromosomes, window_size, threshold, si
                         counts_gz=counts_gz,
                         chromosomes=chromosomes,  # This will be ignored due to our mock
                         window_size=window_size,
+                        pad=pad,
                         threshold=threshold,
                         sigma=sigma,
                         min_size=min_size,
@@ -622,7 +625,11 @@ def format_output_dataframe(footprints):
         # Return empty DataFrame with correct column structure
         return pd.DataFrame(columns=[
             'chrom', 'position', 'fragment_length', 'size', 'max_signal',
-            'mean_signal', 'total_signal', 'p_value', 'q_value'
+            'mean_signal', 'total_signal',
+            'diag_total_signal', 'nuc150_signal',
+            'diag_percentile', 'nuc150_percentile',
+            'potential_nucleosome_score',
+            'p_value', 'q_value'
         ])
 
     # Make a copy to avoid modifying the original
@@ -635,13 +642,25 @@ def format_output_dataframe(footprints):
             formatted = formatted.drop(columns=[col])
 
     # Round numeric columns to 1 decimal place
-    numeric_columns_to_round = ['size', 'max_signal', 'mean_signal', 'total_signal']
+    numeric_columns_to_round = [
+        'size', 'max_signal', 'mean_signal', 'total_signal',
+        'diag_total_signal', 'nuc150_signal',
+    ]
     for col in numeric_columns_to_round:
         if col in formatted.columns:
             formatted[col] = formatted[col].round(1)
 
+    percentile_columns = ['diag_percentile', 'nuc150_percentile', 'potential_nucleosome_score']
+    for col in percentile_columns:
+        if col in formatted.columns:
+            formatted[col] = formatted[col].round(3)
+
     # Ensure column order (p_value and q_value may not always be present)
-    base_columns = ['chrom', 'position', 'fragment_length', 'size', 'max_signal', 'mean_signal', 'total_signal']
+    base_columns = [
+        'chrom', 'position', 'fragment_length', 'size', 'max_signal', 'mean_signal', 'total_signal',
+        'diag_total_signal', 'nuc150_signal', 'diag_percentile', 'nuc150_percentile',
+        'potential_nucleosome_score',
+    ]
     stat_columns = []
     if 'p_value' in formatted.columns:
         stat_columns.append('p_value')
@@ -1065,6 +1084,7 @@ def main(argv=None, prog: str | None = None):
             counts_gz=args.input,
             chromosomes=chromosomes,
             window_size=args.window_size,
+            pad=200,
             threshold=args.threshold,
             sigma=args.sigma,
             min_size=args.min_size,
@@ -1102,6 +1122,17 @@ def main(argv=None, prog: str | None = None):
     if timing_stats:
         timing_stats.end_timer("Footprint detection")
         timing_stats.add_stat("Total footprints detected", len(footprints))
+
+    if timing_stats:
+        timing_stats.start_timer("Nucleosome suspicion scoring")
+    footprints = footprinting.finalize_nucleosome_suspicion_scores(footprints)
+    if timing_stats:
+        timing_stats.end_timer("Nucleosome suspicion scoring")
+        short_candidates = footprints[footprints["fragment_length"] < 80] if not footprints.empty else pd.DataFrame()
+        timing_stats.add_stat("Short-fragment candidates (<80bp)", len(short_candidates))
+        if not short_candidates.empty and "potential_nucleosome_score" in short_candidates.columns:
+            suspicious_short = np.sum(short_candidates["potential_nucleosome_score"] >= 0.75)
+            timing_stats.add_stat("Short candidates with suspicion score >= 0.75", suspicious_short)
 
     # Calculate p-values and q-values if requested
     if not args.skip_pvalues and not footprints.empty:

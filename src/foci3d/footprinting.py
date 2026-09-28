@@ -2150,6 +2150,52 @@ def get_valid_windows(counts_gz, chromosomes=None, window_overlap_bp=0, window_s
     all_windows = []
     step_size = window_size - window_overlap_bp
 
+    def add_segment_windows(chrom, seg_start, seg_end, region_start, region_end):
+        """
+        Add windows covering a valid segment, respecting optional region bounds.
+
+        For bounded regions, ensure the trailing end of the region is covered by
+        an anchored final window. If the bounded region segment is shorter than
+        ``window_size``, emit a single partial window spanning the full segment.
+        """
+        allowed_start = seg_start if region_start is None else max(seg_start, region_start)
+        allowed_end = seg_end if region_end is None else min(seg_end, region_end)
+
+        if allowed_start > allowed_end:
+            return False
+
+        allowed_length = allowed_end - allowed_start + 1
+        last_window_end = None
+
+        if allowed_length >= window_size:
+            for window_start in range(allowed_start, allowed_end - window_size + 2, step_size):
+                window_end = window_start + window_size - 1
+                if window_end <= allowed_end:
+                    all_windows.append((chrom, window_start, window_end))
+                    last_window_end = window_end
+
+                    if max_windows is not None and len(all_windows) >= max_windows:
+                        return True
+
+            if (
+                region_start is not None
+                and region_end is not None
+                and last_window_end is not None
+                and last_window_end < allowed_end
+            ):
+                final_window = (chrom, max(allowed_start, allowed_end - window_size + 1), allowed_end)
+                if not all_windows or all_windows[-1] != final_window:
+                    all_windows.append(final_window)
+                    if max_windows is not None and len(all_windows) >= max_windows:
+                        return True
+
+        elif region_start is not None and region_end is not None:
+            all_windows.append((chrom, allowed_start, allowed_end))
+            if max_windows is not None and len(all_windows) >= max_windows:
+                return True
+
+        return False
+
     for chrom_info in chrom_regions:
         chrom = chrom_info[0]
         region_start = chrom_info[1]
@@ -2186,24 +2232,8 @@ def get_valid_windows(counts_gz, chromosomes=None, window_overlap_bp=0, window_s
             else:
                 # gap too large → close old segment, create windows, and start new one
                 seg_end = prev_pos
-                seg_length = seg_end - seg_start + 1
-
-                # Only process segments that are long enough
-                if seg_length >= window_size:
-                    # Create windows for this segment
-                    for window_start in range(seg_start, seg_end - window_size + 2, step_size):
-                        window_end = window_start + window_size - 1
-
-                        # Ensure we don't exceed segment end
-                        if window_end <= seg_end:
-                            # Ensure window is within the specified region if region is defined
-                            if (region_start is None or window_start >= region_start) and \
-                               (region_end is None or window_end <= region_end):
-                                all_windows.append((chrom, window_start, window_end))
-
-                                # Check if we've reached the maximum number of windows
-                                if max_windows is not None and len(all_windows) >= max_windows:
-                                    return all_windows
+                if add_segment_windows(chrom, seg_start, seg_end, region_start, region_end):
+                    return all_windows
 
                 # Start a new segment
                 seg_start = pos
@@ -2212,24 +2242,8 @@ def get_valid_windows(counts_gz, chromosomes=None, window_overlap_bp=0, window_s
         # Process the final segment if it exists
         if prev_pos is not None:
             seg_end = prev_pos
-            seg_length = seg_end - seg_start + 1
-
-            # Only process segments that are long enough
-            if seg_length >= window_size:
-                # Create windows for this segment
-                for window_start in range(seg_start, seg_end - window_size + 2, step_size):
-                    window_end = window_start + window_size - 1
-
-                    # Ensure we don't exceed segment end
-                    if window_end <= seg_end:
-                        # Ensure window is within the specified region if region is defined
-                        if (region_start is None or window_start >= region_start) and \
-                           (region_end is None or window_end <= region_end):
-                            all_windows.append((chrom, window_start, window_end))
-
-                            # Check if we've reached the maximum number of windows
-                            if max_windows is not None and len(all_windows) >= max_windows:
-                                return all_windows
+            if add_segment_windows(chrom, seg_start, seg_end, region_start, region_end):
+                return all_windows
 
     return all_windows
 
@@ -2311,6 +2325,12 @@ def detect_footprints(counts_gz,
         chrom, window_start, window_end = window
 
         try:
+            analysis_fragment_len_max = fragment_len_max
+            if analysis_fragment_len_max is None:
+                analysis_fragment_len_max = 180
+            else:
+                analysis_fragment_len_max = max(int(analysis_fragment_len_max), 180)
+
             # Get count matrix for this window with padding
             footprint, _ = get_count_matrix(
                 counts_gz=counts_gz,
@@ -2318,7 +2338,7 @@ def detect_footprints(counts_gz,
                 window_start=window_start-pad,
                 window_end=window_end+pad,
                 fragment_len_min=fragment_len_min,
-                fragment_len_max=fragment_len_max,
+                fragment_len_max=analysis_fragment_len_max,
                 scale="yes",
                 sigma=sigma
             )
@@ -2327,9 +2347,15 @@ def detect_footprints(counts_gz,
             if footprint.empty or footprint.shape[0] == 0 or footprint.shape[1] == 0:
                 return pd.DataFrame()
 
+            detect_footprint = footprint
+            if fragment_len_max is not None:
+                detect_footprint = footprint.loc[fragment_len_min:int(fragment_len_max)]
+                if detect_footprint.empty or detect_footprint.shape[0] == 0:
+                    return pd.DataFrame()
+
             # Detect blobs in the footprint matrix
             window_blobs = detect_blobs_matrix(
-                footprint_matrix=footprint,
+                footprint_matrix=detect_footprint,
                 threshold=threshold,
                 min_size=min_size
             )
@@ -2337,6 +2363,11 @@ def detect_footprints(counts_gz,
             # Skip if no blobs were detected
             if window_blobs.empty:
                 return pd.DataFrame()
+
+            window_blobs = annotate_short_blob_nucleosome_components(
+                window_blobs,
+                footprint_matrix=footprint,
+            )
 
             # Add chromosome and window information
             window_blobs['chrom'] = chrom
@@ -2370,21 +2401,59 @@ def detect_footprints(counts_gz,
             delayed(process_window)(window) for window in windows
         )
 
-    # Combine results from all windows
-    all_blobs = pd.concat(results, ignore_index=True)
+    # Combine results from all windows. Adjacent processing windows deliberately
+    # overlap so padded matrix edges do not suppress a footprint. A blob whose
+    # peak falls in that overlap can therefore be reported by both windows.
+    all_blobs = _deduplicate_overlapping_window_blobs(pd.concat(results, ignore_index=True))
 
     # Reorder columns for better readability
     if not all_blobs.empty:
         column_order = [
             'chrom', 'position', 'fragment_length', 'size',
             'max_signal', 'mean_signal', 'total_signal',
+            'diag_total_signal', 'nuc150_signal',
+            'diag_percentile', 'nuc150_percentile',
+            'potential_nucleosome_score',
             'window_start', 'window_end'
         ]
+        column_order = [col for col in column_order if col in all_blobs.columns]
         all_blobs = all_blobs[column_order]
 
     if not quiet:
         print(f"Detected {len(all_blobs)} footprints across {len(windows)} windows.")
     return all_blobs
+
+
+def _deduplicate_overlapping_window_blobs(blobs):
+    """Keep one call for each blob peak reported by overlapping windows.
+
+    Blob identity is the genomic peak coordinate and fragment-length row. This
+    exact key removes repeated observations of the same detected peak without
+    merging nearby, legitimate footprints. When the two window-specific matrix
+    extents yield slightly different summary statistics, retain the stronger
+    call; remaining ties retain the first window result deterministically.
+    """
+    if blobs.empty:
+        return blobs
+
+    identity_columns = ["chrom", "position", "fragment_length"]
+    if not set(identity_columns).issubset(blobs.columns):
+        return blobs
+
+    ranking_columns = [
+        column
+        for column in ("max_signal", "total_signal", "size")
+        if column in blobs.columns
+    ]
+    if not ranking_columns:
+        return blobs.drop_duplicates(subset=identity_columns, keep="first").reset_index(drop=True)
+
+    ordered = blobs.sort_values(
+        by=identity_columns + ranking_columns,
+        ascending=[True] * len(identity_columns) + [False] * len(ranking_columns),
+        kind="mergesort",
+    )
+    return ordered.drop_duplicates(subset=identity_columns, keep="first").reset_index(drop=True)
 
 
 def detect_blobs_matrix(footprint_matrix, threshold, min_size=5):
@@ -2478,6 +2547,128 @@ def detect_blobs_matrix(footprint_matrix, threshold, min_size=5):
 
     # Create DataFrame from blob data
     return pd.DataFrame(blob_data)
+
+
+NUCLEOSOME_SUSPICION_COLUMNS = [
+    "diag_total_signal",
+    "nuc150_signal",
+    "diag_percentile",
+    "nuc150_percentile",
+    "potential_nucleosome_score",
+]
+
+
+def _initialize_nucleosome_suspicion_columns(blobs):
+    annotated = blobs.copy()
+    for column in NUCLEOSOME_SUSPICION_COLUMNS:
+        if column not in annotated.columns:
+            annotated[column] = np.nan
+    return annotated
+
+
+def _collect_endpoint_diagonal_values(
+    footprint_matrix,
+    position,
+    fragment_length,
+    diag_len_min=80,
+    diag_len_max=180,
+    nuc_band_min=140,
+    nuc_band_max=160,
+    self_exclusion_bp=5,
+):
+    if footprint_matrix is None or footprint_matrix.empty:
+        return np.nan, np.nan
+
+    fragment_length = int(fragment_length)
+    position = int(position)
+    available_lengths = footprint_matrix.index.to_numpy(dtype=int)
+    if available_lengths.size == 0:
+        return np.nan, np.nan
+
+    left_endpoint = float(position) - (float(fragment_length) / 2.0)
+    right_endpoint = float(position) + (float(fragment_length) / 2.0)
+    pos_min = int(footprint_matrix.columns.min())
+    pos_max = int(footprint_matrix.columns.max())
+
+    diag_lengths = available_lengths[
+        (available_lengths >= diag_len_min)
+        & (available_lengths <= diag_len_max)
+        & (
+            (available_lengths < (fragment_length - self_exclusion_bp))
+            | (available_lengths > (fragment_length + self_exclusion_bp))
+        )
+    ]
+    nuc_lengths = available_lengths[
+        (available_lengths >= nuc_band_min) & (available_lengths <= nuc_band_max)
+    ]
+
+    diag_values = []
+    nuc_values = []
+
+    def add_values(lengths, collector):
+        for diag_length in lengths:
+            left_pos = int(round(left_endpoint + (diag_length / 2.0)))
+            right_pos = int(round(right_endpoint - (diag_length / 2.0)))
+
+            if pos_min <= left_pos <= pos_max:
+                collector.append(float(footprint_matrix.at[diag_length, left_pos]))
+            if pos_min <= right_pos <= pos_max:
+                collector.append(float(footprint_matrix.at[diag_length, right_pos]))
+
+    add_values(diag_lengths, diag_values)
+    add_values(nuc_lengths, nuc_values)
+
+    diag_total_signal = float(np.sum(diag_values)) if diag_values else 0.0
+    nuc150_signal = float(np.mean(nuc_values)) if nuc_values else np.nan
+    return diag_total_signal, nuc150_signal
+
+
+def annotate_short_blob_nucleosome_components(
+    blobs,
+    footprint_matrix,
+    short_fragment_max=79,
+):
+    annotated = _initialize_nucleosome_suspicion_columns(blobs)
+    if annotated.empty:
+        return annotated
+
+    short_mask = annotated["fragment_length"] < short_fragment_max + 1
+    if not short_mask.any():
+        return annotated
+
+    for idx in annotated.index[short_mask]:
+        diag_total_signal, nuc150_signal = _collect_endpoint_diagonal_values(
+            footprint_matrix,
+            position=annotated.at[idx, "position"],
+            fragment_length=annotated.at[idx, "fragment_length"],
+        )
+        annotated.at[idx, "diag_total_signal"] = diag_total_signal
+        annotated.at[idx, "nuc150_signal"] = nuc150_signal
+
+    return annotated
+
+
+def finalize_nucleosome_suspicion_scores(blobs, short_fragment_max=79):
+    annotated = _initialize_nucleosome_suspicion_columns(blobs)
+    if annotated.empty:
+        return annotated
+
+    short_mask = annotated["fragment_length"] < short_fragment_max + 1
+    if not short_mask.any():
+        return annotated
+
+    short_diag = annotated.loc[short_mask, "diag_total_signal"]
+    short_nuc = annotated.loc[short_mask, "nuc150_signal"]
+
+    diag_percentiles = short_diag.rank(method="average", pct=True)
+    nuc_percentiles = short_nuc.rank(method="average", pct=True)
+
+    annotated.loc[short_mask, "diag_percentile"] = diag_percentiles
+    annotated.loc[short_mask, "nuc150_percentile"] = nuc_percentiles
+    annotated.loc[short_mask, "potential_nucleosome_score"] = np.sqrt(
+        annotated.loc[short_mask, "diag_percentile"] * annotated.loc[short_mask, "nuc150_percentile"]
+    )
+    return annotated
 
 
 def read_footprints_tsv(footprints_tsv_path):
