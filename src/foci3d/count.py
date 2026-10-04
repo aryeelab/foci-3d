@@ -454,8 +454,10 @@ class FragmentCountsPipeline:
                 outfile.write(f"# chrom_sizes: {self.chromosome_sizes}\n")
 
             # Write the original counts data
+            # Stream the counts table instead of reading it into memory at once: the uncompressed
+            # table can be tens to hundreds of GB for deep Micro-C libraries.
             with open(self.counts_file, 'r') as infile:
-                outfile.write(infile.read())
+                shutil.copyfileobj(infile, outfile, 16 * 1024 * 1024)
 
         # Now bgzip the file with header
         cmd_bgzip = ['bgzip', '-c', str(temp_with_header)]
