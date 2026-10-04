@@ -34,7 +34,7 @@ class TestPairsToFragmentCounts(unittest.TestCase):
                 md5_hash.update(chunk)
         return md5_hash.hexdigest()
 
-    def _run_count(self, input_pairs_path, output_path):
+    def _run_count(self, input_pairs_path, output_path, extra_args=(), env=None):
         cmd = [
             sys.executable,
             "-m",
@@ -43,8 +43,9 @@ class TestPairsToFragmentCounts(unittest.TestCase):
             str(input_pairs_path),
             "-o",
             str(output_path),
+            *extra_args,
         ]
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=subprocess_env())
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env or subprocess_env())
 
     def test_pairs_to_fragment_counts_pipeline(self):
         required_tools = ["pairtools", "bgzip", "tabix", "sort", "uniq", "awk"]
@@ -90,3 +91,62 @@ class TestPairsToFragmentCounts(unittest.TestCase):
 
         self.assertTrue(output_path.exists())
         self.assertTrue(Path(str(output_path) + ".tbi").exists())
+
+    def test_sort_buffer_and_tmp_dir_do_not_change_output(self):
+        required_tools = ["pairtools", "bgzip", "tabix", "sort", "uniq", "awk"]
+        missing = [tool for tool in required_tools if shutil.which(tool) is None]
+        if missing:
+            self.skipTest(f"Required external tools are not available: {', '.join(missing)}")
+
+        work_tmp = Path(self.temp_dir) / "custom_tmp"
+        output_path = Path(self.temp_dir) / "test_output_sortbuf.counts.tsv.gz"
+        # A tiny buffer forces sort to spill and merge temporary files.
+        result = self._run_count(
+            self.input_pairs_file, output_path,
+            extra_args=["--sort-buffer", "1M", "--tmp-dir", str(work_tmp), "--verbose"],
+        )
+        if result.returncode != 0:
+            self.fail(f"count failed ({result.returncode})\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+        self.assertIn("Sort buffer: 1M", result.stderr)
+        self.assertIn(f"-S 1M -T {work_tmp}", result.stderr)
+        self.assertEqual(self.expected_md5, self.calculate_md5(output_path))
+        # intermediates are cleaned up from the custom temp dir
+        self.assertEqual(list(work_tmp.iterdir()), [])
+
+    def test_sort_buffer_from_environment(self):
+        required_tools = ["pairtools", "bgzip", "tabix", "sort", "uniq", "awk"]
+        missing = [tool for tool in required_tools if shutil.which(tool) is None]
+        if missing:
+            self.skipTest(f"Required external tools are not available: {', '.join(missing)}")
+        env = subprocess_env()
+        env["FOCI_SORT_BUFFER"] = "3M"
+        output_path = Path(self.temp_dir) / "test_output_sortbuf_env.counts.tsv.gz"
+        result = self._run_count(self.input_pairs_file, output_path, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Sort buffer: 3M", result.stderr)
+
+    def test_invalid_sort_buffer_is_rejected(self):
+        output_path = Path(self.temp_dir) / "never_written.counts.tsv.gz"
+        result = self._run_count(self.input_pairs_file, output_path, extra_args=["--sort-buffer", "lots"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid sort buffer size", result.stderr)
+        self.assertFalse(output_path.exists())
+
+
+class TestResolveSortBuffer(unittest.TestCase):
+    def test_resolution_order(self):
+        import os
+        from unittest import mock
+        from foci3d.count import DEFAULT_SORT_BUFFER, PipelineError, resolve_sort_buffer
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FOCI_SORT_BUFFER", None)
+            self.assertEqual(resolve_sort_buffer(None), DEFAULT_SORT_BUFFER)
+            os.environ["FOCI_SORT_BUFFER"] = "12G"
+            self.assertEqual(resolve_sort_buffer(None), "12G")
+            self.assertEqual(resolve_sort_buffer("512M"), "512M")
+        for ok in ["2G", "512M", "25%", "1.5G", "1000000"]:
+            self.assertEqual(resolve_sort_buffer(ok), ok)
+        for bad in ["", "2 G", "-1G", "G2", "2GB"]:
+            with self.assertRaises(PipelineError):
+                resolve_sort_buffer(bad)

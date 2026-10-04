@@ -39,6 +39,16 @@ Make a 2D histogram where each fragment is represented by (fragment midpoint, fr
 foci-3d count test.pairs -o test.counts.tsv.gz
 ```
 
+Memory and disk: the only large in-memory step is the external sort, whose buffer is capped by
+`--sort-buffer` (GNU `sort -S`; default `$FOCI_SORT_BUFFER`, else `2G`). Peak memory is roughly the
+buffer plus ~0.5-1 GB (12.6 GB peak observed with `12G`), independent of library depth, so on SLURM request at least the buffer + 1 GB.
+A larger buffer (e.g. `12G`) sorts deep libraries faster. Intermediate and sort spill files go to
+`--tmp-dir` (default `$TMPDIR`); allow roughly 2-3x the uncompressed fragments size there.
+
+```bash
+foci-3d count deep.pairs -o deep.counts.tsv.gz --sort-buffer 12G --tmp-dir /scratch/$USER/foci
+```
+
 ### 3. Plot footprints
 
 Render a heatmap image for a genomic interval:

@@ -27,6 +27,7 @@ import sys
 import os
 import time
 import subprocess
+import re
 import argparse
 import tempfile
 import shutil
@@ -50,6 +51,24 @@ def format_time_hms(seconds: float) -> str:
     secs = total_seconds % 60
     return f"{hours}:{minutes:02d}:{secs:02d}"
 
+DEFAULT_SORT_BUFFER = "2G"
+SORT_BUFFER_ENV = "FOCI_SORT_BUFFER"
+_SORT_BUFFER_RE = re.compile(r"^[0-9]+(\.[0-9]+)?[%bKMGTPEZY]?$")
+
+
+def resolve_sort_buffer(value: Optional[str] = None) -> str:
+    """Return the GNU sort -S size: explicit value, else $FOCI_SORT_BUFFER, else DEFAULT_SORT_BUFFER."""
+    if value is None:
+        value = os.environ.get(SORT_BUFFER_ENV) or DEFAULT_SORT_BUFFER
+    value = str(value).strip()
+    if not _SORT_BUFFER_RE.match(value):
+        raise PipelineError(
+            f"Invalid sort buffer size {value!r}: use a number with optional suffix "
+            "%, b, K, M, G, T (e.g. 2G, 512M, 25%)"
+        )
+    return value
+
+
 class PipelineError(Exception):
     """Custom exception for pipeline errors."""
     pass
@@ -58,8 +77,12 @@ class FragmentCountsPipeline:
     """Main pipeline class for converting pairs to fragment counts."""
     
     def __init__(self, input_file: str, output_file: Optional[str] = None, 
-                 keep_intermediates: bool = False, verbose: bool = False):
+                 keep_intermediates: bool = False, verbose: bool = False,
+                 sort_buffer: Optional[str] = None, tmp_dir: Optional[str] = None):
         self.input_file = Path(input_file)
+        # Memory cap for the external sort (GNU sort -S). GNU sort otherwise sizes its buffer from the
+        # node's physical memory, which ignores SLURM/cgroup limits and can get the job OOM-killed.
+        self.sort_buffer = resolve_sort_buffer(sort_buffer)
         self.keep_intermediates = keep_intermediates
         self.verbose = verbose
         
@@ -81,7 +104,10 @@ class FragmentCountsPipeline:
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
         
         # Create temporary directory for intermediate files
-        self.temp_dir = Path(tempfile.mkdtemp(prefix="fragment_counts_"))
+        # (also used for sort's spill files via -T; defaults to $TMPDIR, else the system temp dir)
+        if tmp_dir is not None:
+            Path(tmp_dir).mkdir(parents=True, exist_ok=True)
+        self.temp_dir = Path(tempfile.mkdtemp(prefix="fragment_counts_", dir=tmp_dir))
         
         # Define intermediate file paths
         self.fragments_file = self.temp_dir / "fragments.tsv"
@@ -312,13 +338,19 @@ class FragmentCountsPipeline:
 
         return stats
     
+    def _sort_command(self) -> list:
+        """Sort by chromosome, midpoint, length with a bounded buffer; spill files go to temp_dir."""
+        return ['sort', '-S', self.sort_buffer, '-T', str(self.temp_dir),
+                '-k1,1', '-k2,2n', '-k3,3n', str(self.fragments_file)]
+
     def step2_sort_fragments(self) -> Dict[str, Any]:
         """\nStep 2: Sort fragments by chromosome, midpoint, and length"""
         print("Step 2: Sorting fragments...", file=sys.stderr)
         step_start = time.time()
 
-        # Sort command: sort -k1,1 -k2,2n -k3,3n
-        cmd = ['sort', '-k1,1', '-k2,2n', '-k3,3n', str(self.fragments_file)]
+        cmd = self._sort_command()
+        if self.verbose:
+            print(f"  Command: {' '.join(cmd)}", file=sys.stderr)
 
         # Run sort and redirect output
         with open(self.sorted_fragments_file, 'w') as outfile:
@@ -572,6 +604,7 @@ class FragmentCountsPipeline:
 
         print(f"Output file: {self.output_file}", file=sys.stderr)
         print(f"Temporary directory: {self.temp_dir}", file=sys.stderr)
+        print(f"Sort buffer: {self.sort_buffer}", file=sys.stderr)
         print("=" * 60, file=sys.stderr)
         print("", file=sys.stderr)  # Add blank line for separation
 
@@ -712,6 +745,23 @@ Performance:
     )
 
     parser.add_argument(
+        "--sort-buffer",
+        metavar="SIZE",
+        default=None,
+        help=("Main-memory buffer for the fragment sort, passed to GNU sort -S (e.g. 2G, 12G, 25%%). "
+              f"Peak memory of count is roughly this value plus ~0.5-1 GB. Default: ${SORT_BUFFER_ENV} "
+              f"if set, else {DEFAULT_SORT_BUFFER}. Larger buffers mean fewer temporary merge files and faster sorts.")
+    )
+
+    parser.add_argument(
+        "--tmp-dir",
+        metavar="DIR",
+        default=None,
+        help=("Directory for intermediate files and sort spill files (needs roughly 2-3x the "
+              "uncompressed fragments size free). Default: $TMPDIR, else the system temp directory.")
+    )
+
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable verbose output with detailed progress information"
@@ -762,7 +812,9 @@ def main(argv=None, prog: str | None = None):
             input_file=args.input_file,
             output_file=args.output,
             keep_intermediates=args.keep_intermediates,
-            verbose=args.verbose
+            verbose=args.verbose,
+            sort_buffer=args.sort_buffer,
+            tmp_dir=args.tmp_dir,
         )
 
         pipeline.run_pipeline()
