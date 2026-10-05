@@ -1,0 +1,17 @@
+# A release tag vX.Y.Z must match the version in pyproject.toml and src/foci3d/__init__.py.
+name: version-check
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches package version
+        run: |
+          tag=${GITHUB_REF_NAME#v}
+          py=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)
+          init=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/foci3d/__init__.py)
+          echo "tag=$tag pyproject=$py __init__=$init"
+          [ "$tag" = "$py" ] && [ "$tag" = "$init" ] || { echo "::error::tag v$tag does not match package version"; exit 1; }

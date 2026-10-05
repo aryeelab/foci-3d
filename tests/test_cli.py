@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 
+import re
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 
 from helpers import subprocess_env
+
+# The package version is defined in pyproject.toml; the CLI and foci3d.__version__ must match it.
+PYPROJECT_VERSION = re.search(
+    r'^version = "(.+)"$', (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(), re.M
+).group(1)
 
 
 class TestCliHelp(unittest.TestCase):
@@ -30,7 +37,7 @@ class TestCliHelp(unittest.TestCase):
     def test_top_level_version(self):
         result = self.run_cli("--version")
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "foci-3d 0.2.0")
+        self.assertEqual(result.stdout.strip(), f"foci-3d {PYPROJECT_VERSION}")
 
     def test_parse_help(self):
         result = self.run_cli("parse", "--help")
@@ -89,4 +96,4 @@ class TestCliHelp(unittest.TestCase):
             timeout=60,
         )
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "0.2.0")
+        self.assertEqual(result.stdout.strip(), PYPROJECT_VERSION)

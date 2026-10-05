@@ -22,14 +22,24 @@ authoritative for options; this skill adds what the help text does not say.
 
 ## Workflow
 1. **Install** into a directory the user controls; never use or modify someone else's install.
-   - Quick use: `conda install -c conda-forge -c bioconda foci-3d` (brings samtools, pairtools, bgzip, tabix).
-   - Reproducible pipelines: pin a commit. Clone into `<prefix>/foci-3d/<short-sha>` and
-     `git checkout <sha>`, create a dedicated env (`conda env create -p <envs>/foci-3d-<short-sha> -f environment.yml`,
-     or from an exported explicit package list), then `<env>/bin/pip install --no-deps <checkout>`
-     (non-editable, so the env cannot drift with the checkout). Run
-     `PATH=<env>/bin:$PATH <env>/bin/python tests/run_tests.py` in the checkout (without the env on
-     `PATH` the tool tests silently skip). Never edit a pinned checkout; a new commit gets a new directory and env.
-   - `foci-3d --version` does not identify unreleased commits; record the git commit you ran.
+   - Quick use: `conda install -c conda-forge -c bioconda foci-3d=<version>` (brings samtools,
+     pairtools, bgzip, tabix).
+   - Reproducible pipelines: install a **released version** (tags `vX.Y.Z`; see the GitHub releases)
+     into its own directory and env, both named by version:
+     ```bash
+     V=0.3.0; SRC=<prefix>/foci-3d/$V; ENV=<envs>/foci-3d-$V
+     git clone -q https://github.com/aryeelab/foci-3d.git "$SRC" && (cd "$SRC" && git checkout -q v$V)
+     # exact env the release was tested in (linux-64); elsewhere: conda env create -p "$ENV" -f "$SRC/environment.yml"
+     conda create -q -y -p "$ENV" --file "$SRC/envs/foci-3d-$V.linux-64.explicit.txt"
+     "$ENV/bin/pip" install -q --no-deps "$SRC"      # non-editable: the env cannot drift with the checkout
+     (cd "$SRC" && PATH="$ENV/bin:$PATH" "$ENV/bin/python" tests/run_tests.py)   # tool tests skip without PATH
+     "$ENV/bin/foci-3d" --version
+     ```
+     Creating the env downloads and links a few hundred packages (minutes on local disk, longer on
+     network storage): run it as a batch job, not in an interactive agent call. Never edit an
+     installed version; a new version gets a new directory and env.
+   - Record the version (`foci-3d --version`) in every output. Development checkouts between releases
+     report the previous release number, so record their git commit instead.
 2. **Pairs** (`foci-3d parse sample.bam -o sample.pairs.gz`) or bring your own. Requirements for
    your own pairs: `pos51 pos52 pos31 pos32` columns (`pairtools parse --add-columns pos5,pos3`),
    input grouped by read name (bwa output or `samtools sort -n`), deduplicated.

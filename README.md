@@ -17,6 +17,8 @@ conda install -c conda-forge -c bioconda foci-3d
 
 This installs the Python package together with the external bioinformatics tools required for the core workflow, including `samtools`, `pairtools`, `bgzip` and `tabix`.
 
+To reproduce a specific release exactly, check out its tag (e.g. `v0.3.0`) and create the environment from `envs/foci-3d-<version>.linux-64.explicit.txt` (`conda create -p <env> --file <that file>`), then `pip install --no-deps .`. Release steps are in [RELEASING.md](RELEASING.md).
+
 ## Quickstart
 
 ### 1. Parsing pairs from a BAM
