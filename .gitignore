@@ -14,5 +14,5 @@ __pycache__/
 /dummy.png
 /test_*partner_filtered.png
 
-# Agent settings are per-user; skills under .agents/ and .claude/skills/ are tracked.
+# Agent settings are per-user; skills/ (and the .agents/.claude symlinks to it) are tracked.
 .claude/settings.local.json

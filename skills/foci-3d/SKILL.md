@@ -21,10 +21,15 @@ authoritative for options; this skill adds what the help text does not say.
   library composition; see `references/interpreting-fragment-lengths.md`.
 
 ## Workflow
-1. **Install**: `conda install -c conda-forge -c bioconda foci-3d` (brings samtools, pairtools,
-   bgzip, tabix). Development: clone, `conda env create -f environment.yml`, `pip install -e .`,
-   `python tests/run_tests.py` (run with the env's `bin` on `PATH`, or tool tests skip).
-   `foci-3d --version` does not identify unreleased commits; record the git commit you ran.
+1. **Install** into a directory the user controls; never use or modify someone else's install.
+   - Quick use: `conda install -c conda-forge -c bioconda foci-3d` (brings samtools, pairtools, bgzip, tabix).
+   - Reproducible pipelines: pin a commit. Clone into `<prefix>/foci-3d/<short-sha>` and
+     `git checkout <sha>`, create a dedicated env (`conda env create -p <envs>/foci-3d-<short-sha> -f environment.yml`,
+     or from an exported explicit package list), then `<env>/bin/pip install --no-deps <checkout>`
+     (non-editable, so the env cannot drift with the checkout). Run
+     `PATH=<env>/bin:$PATH <env>/bin/python tests/run_tests.py` in the checkout (without the env on
+     `PATH` the tool tests silently skip). Never edit a pinned checkout; a new commit gets a new directory and env.
+   - `foci-3d --version` does not identify unreleased commits; record the git commit you ran.
 2. **Pairs** (`foci-3d parse sample.bam -o sample.pairs.gz`) or bring your own. Requirements for
    your own pairs: `pos51 pos52 pos31 pos32` columns (`pairtools parse --add-columns pos5,pos3`),
    input grouped by read name (bwa output or `samtools sort -n`), deduplicated.
