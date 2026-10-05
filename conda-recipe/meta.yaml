@@ -1,5 +1,5 @@
 {% set name = "foci-3d" %}
-{% set version = "0.1.0" %}
+{% set version = "0.3.0" %}
 
 package:
   name: {{ name }}
@@ -7,7 +7,7 @@ package:
 
 source:
   url: https://github.com/aryeelab/foci-3d/archive/refs/tags/v{{ version }}.tar.gz
-  sha256: 6217f19b22148d2f0f9cf2ed21eecef88ef71b18cc0d7fef62d6984075228d7d
+  sha256: 381ddda850792058d3f7d9eb4619521f105bf057d0a946ac5a8bc5be48599c17
 
 build:
   noarch: python
