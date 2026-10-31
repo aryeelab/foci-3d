@@ -55,6 +55,9 @@ Examples:
 
   # Disable sampling and process all windows exactly
   foci-3d qc sample1.counts.tsv.gz sample2.counts.tsv.gz --sample-windows all -o exact_qc
+
+Without --region-bed the analysis domain is the autosomes and X (contigs named chr1..chrN/chrX or 1..N/X):
+scaffolds, alt/random contigs, chrM and chrY are ignored. --all-contigs uses every contig instead.
         """,
     )
     parser.add_argument(
@@ -71,6 +74,12 @@ Examples:
     parser.add_argument(
         "--region-bed",
         help="Optional BED file defining a shared analysis domain for all samples.",
+    )
+    parser.add_argument(
+        "--all-contigs",
+        action="store_true",
+        help="Without --region-bed, use every contig in the counts file (scaffolds, chrM and chrY included) "
+        "instead of only the autosomes and X.",
     )
     parser.add_argument(
         "--sample-windows",
@@ -151,11 +160,24 @@ def load_bed_intervals(path: str) -> dict[str, list[tuple[int, int]]]:
     return intervals
 
 
-def derive_domain_intervals(counts_path: str, region_bed: str | None) -> dict[str, list[tuple[int, int]]]:
+PRIMARY_CONTIG_RE = re.compile(r"^(chr)?([0-9]+|X)$")
+
+
+def domain_name(region_bed: str | None, all_contigs: bool) -> str:
+    if region_bed is not None:
+        return "region_bed"
+    return "all_contigs" if all_contigs else "autosomes_x"
+
+
+def derive_domain_intervals(
+    counts_path: str, region_bed: str | None, all_contigs: bool = False
+) -> dict[str, list[tuple[int, int]]]:
     if region_bed is not None:
         return load_bed_intervals(region_bed)
     with pysam.TabixFile(counts_path) as tabix:
         contigs = list(tabix.contigs)
+    if not all_contigs:
+        contigs = [chrom for chrom in contigs if PRIMARY_CONTIG_RE.match(chrom)]
 
     observed_intervals: dict[str, list[tuple[int, int]]] = {}
     with pysam.TabixFile(counts_path) as tabix:
@@ -387,10 +409,13 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
             print(f"Error: counts file not found: {counts_path}", file=sys.stderr)
             return 1
 
-        intervals = derive_domain_intervals(counts_path, args.region_bed)
+        intervals = derive_domain_intervals(counts_path, args.region_bed, args.all_contigs)
         windows_all = build_windows(intervals, args.window_size_bp)
         if not windows_all:
-            print(f"Error: no analysis windows available for sample {sample}", file=sys.stderr)
+            hint = ""
+            if args.region_bed is None and not args.all_contigs:
+                hint = " (no autosome or X contigs found; use --all-contigs or --region-bed for other contig names)"
+            print(f"Error: no analysis windows available for sample {sample}{hint}", file=sys.stderr)
             return 1
 
         sampled_windows = select_windows(windows_all, sample_windows, args.seed + idx)
@@ -403,6 +428,7 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
         true_span_bp = int(sum(end - start for chrom_intervals in intervals.values() for start, end in chrom_intervals))
         metrics_row["genomic_span_bp"] = true_span_bp
         metrics_row["genomic_span_kb"] = true_span_bp / 1000.0
+        metrics_row["domain"] = domain_name(args.region_bed, args.all_contigs)
         density_tables.append(density_df)
         metric_rows.append(metrics_row)
 

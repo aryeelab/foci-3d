@@ -17,7 +17,7 @@ conda install -c conda-forge -c bioconda foci-3d
 
 This installs the Python package together with the external bioinformatics tools required for the core workflow, including `samtools`, `pairtools`, `bgzip` and `tabix`.
 
-To reproduce a specific release exactly, check out its tag (e.g. `v0.3.0`) and create the environment from `envs/foci-3d-<version>.linux-64.explicit.txt` (`conda create -p <env> --file <that file>`), then `pip install --no-deps .`. Release steps are in [RELEASING.md](RELEASING.md).
+To reproduce a specific release exactly, check out its tag (e.g. `v0.4.0`) and create the environment from `envs/foci-3d-<version>.linux-64.explicit.txt` (`conda create -p <env> --file <that file>`), then `pip install --no-deps .`. Release steps are in [RELEASING.md](RELEASING.md).
 
 ## Quickstart
 
@@ -153,7 +153,7 @@ By default, `foci-3d qc` estimates these summaries from sampled genomic windows 
 - `--window-size-bp 10000`
 - `--seed 123`
 
-Use `--sample-windows all` to disable sampling and scan the full analysis domain exactly. If `--region-bed` is omitted, the command uses the span covered by the observed records in each counts file. If `--sample-name` is omitted, sample names are inferred from `SAMPLE_NAME.counts.tsv.gz`.
+Use `--sample-windows all` to disable sampling and scan the full analysis domain exactly. If `--region-bed` is omitted, the domain is the autosomes and X (contigs named `chr1`…/`chrX` or `1`…/`X`), from the first to the last record on each: scaffolds, alt/random contigs, chrM and chrY are ignored. `--all-contigs` uses every contig in the counts file instead (the behaviour before 0.4.0). The metrics table records the scope used in its `domain` column (`autosomes_x`, `all_contigs` or `region_bed`). If `--sample-name` is omitted, sample names are inferred from `SAMPLE_NAME.counts.tsv.gz`.
 
 The metrics table reports:
 

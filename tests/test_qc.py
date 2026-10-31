@@ -96,3 +96,53 @@ class TestQcCommand(unittest.TestCase):
             metrics_a = pd.read_csv(Path(temp_dir) / "sample_a_foci_fragment_metrics.tsv", sep="\t")
             metrics_b = pd.read_csv(Path(temp_dir) / "sample_b_foci_fragment_metrics.tsv", sep="\t")
             pd.testing.assert_frame_equal(metrics_a, metrics_b)
+
+    def write_counts_with_extra_contigs(self, temp_dir):
+        """Test counts (chr8) plus records on chrM, chrY and a scaffold, bgzipped and tabix-indexed."""
+        import gzip
+
+        import pysam
+
+        source = REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz"
+        with gzip.open(source, "rt") as handle:
+            lines = handle.readlines()
+        header = [line for line in lines if line.startswith("#")]
+        records = [line for line in lines if not line.startswith("#")]
+        for chrom in ("chrM", "chrUn_JH584304", "chrY"):
+            records += [f"{chrom}\t{1000 + 100 * i}.0\t50\t1\n" for i in range(100)]
+        records.sort(key=lambda line: (line.split("\t")[0], float(line.split("\t")[1])))
+        plain = Path(temp_dir) / "extra.counts.tsv"
+        plain.write_text("".join(header + records))
+        compressed = pysam.tabix_index(str(plain), seq_col=0, start_col=1, end_col=1, zerobased=True, meta_char="#")
+        return compressed
+
+    def test_qc_default_domain_is_autosomes_and_x(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            counts_file = self.write_counts_with_extra_contigs(temp_dir)
+            prefix_default = Path(temp_dir) / "default"
+            prefix_all = Path(temp_dir) / "all"
+            result = self.run_cli(counts_file, "--sample-windows", "all", "-o", str(prefix_default))
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            result = self.run_cli(counts_file, "--sample-windows", "all", "--all-contigs", "-o", str(prefix_all))
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+            default = pd.read_csv(Path(temp_dir) / "default_foci_fragment_metrics.tsv", sep="\t")
+            all_contigs = pd.read_csv(Path(temp_dir) / "all_foci_fragment_metrics.tsv", sep="\t")
+            self.assertEqual(default.loc[0, "domain"], "autosomes_x")
+            self.assertEqual(all_contigs.loc[0, "domain"], "all_contigs")
+            # The 300 extra 50-bp fragments count only with --all-contigs.
+            self.assertEqual(
+                int(all_contigs.loc[0, "num_fragments_le80bp"]) - int(default.loc[0, "num_fragments_le80bp"]), 300
+            )
+            self.assertGreater(int(all_contigs.loc[0, "genomic_span_bp"]), int(default.loc[0, "genomic_span_bp"]))
+
+    def test_qc_region_bed_may_use_any_contig(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bed = Path(temp_dir) / "scaffold.bed"
+            bed.write_text("chrUn_JH584304\t0\t20000\n")
+            counts_file = self.write_counts_with_extra_contigs(temp_dir)
+            result = self.run_cli(counts_file, "--region-bed", str(bed), "--sample-windows", "all", "-o", str(Path(temp_dir) / "bed"))
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            metrics = pd.read_csv(Path(temp_dir) / "bed_foci_fragment_metrics.tsv", sep="\t")
+            self.assertEqual(metrics.loc[0, "domain"], "region_bed")
+            self.assertEqual(int(metrics.loc[0, "num_fragments_le80bp"]), 100)

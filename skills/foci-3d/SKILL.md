@@ -27,7 +27,7 @@ authoritative for options; this skill adds what the help text does not say.
    - Reproducible pipelines: install a **released version** (tags `vX.Y.Z`; see the GitHub releases)
      into its own directory and env, both named by version:
      ```bash
-     V=0.3.0; SRC=<prefix>/foci-3d/$V; ENV=<envs>/foci-3d-$V
+     V=0.4.0; SRC=<prefix>/foci-3d/$V; ENV=<envs>/foci-3d-$V
      git clone -q https://github.com/aryeelab/foci-3d.git "$SRC" && (cd "$SRC" && git checkout -q v$V)
      # exact env the release was tested in (linux-64); elsewhere: conda env create -p "$ENV" -f "$SRC/environment.yml"
      conda create -q -y -p "$ENV" --file "$SRC/envs/foci-3d-$V.linux-64.explicit.txt"
@@ -57,7 +57,9 @@ authoritative for options; this skill adds what the help text does not say.
 5. **QC**: `foci-3d qc a.counts.tsv.gz b.counts.tsv.gz -o out/qc` writes
    `out/qc_foci_fragment_length_dist.png` and `out/qc_foci_fragment_metrics.tsv` (% fragments ≤80 bp,
    zero-window fraction and median ≤80 bp fragments per kb). Defaults sample 1000 × 10-kb windows
-   (seed 123); `--sample-windows all` is exact. For capture assays always pass `--region-bed <capture.bed>`.
+   (seed 123); `--sample-windows all` is exact. Without a BED the domain is the autosomes and X (scaffolds,
+   chrM and chrY ignored; `--all-contigs` for everything; the `domain` column records which). For capture
+   assays always pass `--region-bed <capture.bed>`.
 6. **Plot**: `foci-3d plot -i s.counts.tsv.gz -r chr:start-end -o fig.png`; repeat `-i`/`--track-title`
    for multiple samples, `--gene-track` for annotation, `--pairs` + `--partner-region` to restrict to
    fragments whose partner falls in another region. Normalisation options are explained in the README
