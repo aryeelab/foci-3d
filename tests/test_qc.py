@@ -69,6 +69,9 @@ class TestQcCommand(unittest.TestCase):
                 "pct_fragments_le80bp",
                 "frac_zero_windows_le80bp",
                 "median_num_fragments_le80bp_per_kb",
+                "num_fragments",
+                "frac_zero_windows",
+                "median_num_fragments_per_kb",
             }
             self.assertTrue(expected_columns.issubset(metrics_df.columns))
             self.assertEqual(metrics_df.loc[0, "sample"], "mesc_microc_test")
@@ -135,6 +138,37 @@ class TestQcCommand(unittest.TestCase):
                 int(all_contigs.loc[0, "num_fragments_le80bp"]) - int(default.loc[0, "num_fragments_le80bp"]), 300
             )
             self.assertGreater(int(all_contigs.loc[0, "genomic_span_bp"]), int(default.loc[0, "genomic_span_bp"]))
+
+    def test_qc_all_fragment_metrics(self):
+        """num_fragments, frac_zero_windows and median_num_fragments_per_kb on hand-made counts."""
+        import gzip
+
+        import pysam
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with gzip.open(REPO_ROOT / "tests" / "data" / "mesc_microc_test.counts.tsv.gz", "rt") as handle:
+                header = [line for line in handle if line.startswith("#")]
+            chrom = "chrUn_JH584304"
+            # Window 0-10 kb: 10 x 50 bp + 30 x 150 bp; 10-20 kb: 20 x 200 bp; 20-30 kb: empty.
+            records = [f"{chrom}\t1000.0\t50\t10\n", f"{chrom}\t2000.0\t150\t30\n", f"{chrom}\t15000.0\t200\t20\n"]
+            plain = Path(temp_dir) / "hand.counts.tsv"
+            plain.write_text("".join(header + records))
+            counts_file = pysam.tabix_index(str(plain), seq_col=0, start_col=1, end_col=1, zerobased=True, meta_char="#")
+            bed = Path(temp_dir) / "three_windows.bed"
+            bed.write_text(f"{chrom}\t0\t30000\n")
+            result = self.run_cli(counts_file, "--region-bed", str(bed), "--sample-windows", "all", "-o", str(Path(temp_dir) / "hand"))
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            metrics = pd.read_csv(Path(temp_dir) / "hand_foci_fragment_metrics.tsv", sep="\t")
+            row = metrics.loc[0]
+            self.assertEqual(int(row["num_windows"]), 3)
+            self.assertEqual(int(row["num_fragments"]), 60)
+            self.assertEqual(int(row["num_fragments_le80bp"]), 10)
+            self.assertAlmostEqual(float(row["pct_fragments_le80bp"]), 100 * 10 / 60, places=5)
+            self.assertAlmostEqual(float(row["frac_zero_windows"]), 1 / 3, places=5)
+            self.assertAlmostEqual(float(row["frac_zero_windows_le80bp"]), 2 / 3, places=5)
+            # Medians over non-empty windows only: all fragments (4, 2) per kb; <=80 bp (1) per kb.
+            self.assertAlmostEqual(float(row["median_num_fragments_per_kb"]), 3.0, places=5)
+            self.assertAlmostEqual(float(row["median_num_fragments_le80bp_per_kb"]), 1.0, places=5)
 
     def test_qc_region_bed_may_use_any_contig(self):
         with tempfile.TemporaryDirectory() as temp_dir:

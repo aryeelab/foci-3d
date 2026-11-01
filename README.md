@@ -161,6 +161,9 @@ The metrics table reports:
 - number and percent of fragments `<=80 bp`
 - fraction of zero windows for fragments `<=80 bp`
 - median nonzero fragment density per kb for fragments `<=80 bp`
+- total number of fragments, fraction of zero windows and median nonzero fragment density per kb for all fragments (`num_fragments`, `frac_zero_windows`, `median_num_fragments_per_kb`; since 0.5.0)
+
+The per-kb medians are taken over 10-kb windows that contain at least one fragment of that class; the zero-window fractions report the rest. Together they show how many fragments are available for footprinting at a typical locus, which depends on sequencing depth as well as on library quality.
 
 See `foci-3d qc --help` for complete options.
 

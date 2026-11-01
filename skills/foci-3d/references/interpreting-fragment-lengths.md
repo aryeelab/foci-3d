@@ -47,6 +47,10 @@ with `tabix` on the capture BED). Without a capture BED, do not report RCMC comp
 - Sub-read-length mode: use a 5-bp rolling mean over ~60 bp to read length − 1, so short-length
   spikes do not win.
 - chrM share of fragments, reported on its own (usually well under 1% in Micro-C).
+- Median fragments per kb, all and ≤80 bp (`median_num_fragments_per_kb`,
+  `median_num_fragments_le80bp_per_kb`): data available at a typical locus. Unlike the percentages these
+  scale with sequencing depth, so use them to judge whether a library is deep enough for footprinting,
+  not to compare library quality. Read them with the zero-window fractions (medians skip empty windows).
 
 ## Comparing datasets
 - Same species and genome build only; check the build from the pairs or counts header

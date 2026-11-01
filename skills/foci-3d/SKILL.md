@@ -55,8 +55,9 @@ authoritative for options; this skill adds what the help text does not say.
      `gzip -dc s.counts.tsv.gz | awk -F'\t' '$1!~/^#/{n+=$4} END{print n}'` vs `2 * (data lines in pairs)`.
      A shortfall usually means truncated pairs.
 5. **QC**: `foci-3d qc a.counts.tsv.gz b.counts.tsv.gz -o out/qc` writes
-   `out/qc_foci_fragment_length_dist.png` and `out/qc_foci_fragment_metrics.tsv` (% fragments ≤80 bp,
-   zero-window fraction and median ≤80 bp fragments per kb). Defaults sample 1000 × 10-kb windows
+   `out/qc_foci_fragment_length_dist.png` and `out/qc_foci_fragment_metrics.tsv` (% fragments ≤80 bp;
+   for ≤80 bp and, since 0.5.0, all fragments: count, zero-window fraction and median fragments per kb over
+   non-empty windows, i.e. fragments available for footprinting at a typical locus; depth-dependent). Defaults sample 1000 × 10-kb windows
    (seed 123); `--sample-windows all` is exact. Without a BED the domain is the autosomes and X (scaffolds,
    chrM and chrY ignored; `--all-contigs` for everything; the `domain` column records which). For capture
    assays always pass `--region-bed <capture.bed>`.

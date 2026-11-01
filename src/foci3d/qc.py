@@ -227,14 +227,17 @@ def summarize_sample(
     total_fragments = 0
     short_fragments = 0
     short_counts_by_window: list[float] = []
+    all_counts_by_window: list[float] = []
 
     with pysam.TabixFile(counts_path) as tabix:
         for window in windows:
             window_short = 0.0
+            window_all = 0.0
             try:
                 records = tabix.fetch(window.chrom, window.start_0based, window.end_0based, parser=pysam.asTuple())
             except ValueError:
                 short_counts_by_window.append(0.0)
+                all_counts_by_window.append(0.0)
                 continue
             for record in records:
                 midpoint = float(record[1])
@@ -244,10 +247,12 @@ def summarize_sample(
                 count = int(record[3])
                 length_counts[fragment_length] = length_counts.get(fragment_length, 0) + count
                 total_fragments += count
+                window_all += count
                 if fragment_length <= SHORT_FRAGMENT_MAX:
                     short_fragments += count
                     window_short += count
             short_counts_by_window.append(window_short)
+            all_counts_by_window.append(window_all)
 
     if total_fragments == 0:
         raise ValueError(f"No fragments overlapped the analysis windows for sample {sample}")
@@ -267,6 +272,11 @@ def summarize_sample(
         dtype=float,
     )
     nonzero_short_per_kb = short_per_kb[short_per_kb > 0]
+    all_per_kb = np.array(
+        [all_count / window.width_kb for all_count, window in zip(all_counts_by_window, windows)],
+        dtype=float,
+    )
+    nonzero_all_per_kb = all_per_kb[all_per_kb > 0]
     metrics_row = {
         "sample": sample,
         "genomic_span_bp": int(sum(window.width_bp for window in build_windows_for_total(windows, total_window_count))),
@@ -277,6 +287,9 @@ def summarize_sample(
         f"pct_fragments_le{SHORT_FRAGMENT_MAX}bp": float(100.0 * short_fragments / total_fragments),
         f"frac_zero_windows_le{SHORT_FRAGMENT_MAX}bp": float(np.mean(short_per_kb == 0)),
         f"median_num_fragments_le{SHORT_FRAGMENT_MAX}bp_per_kb": float(np.median(nonzero_short_per_kb)) if nonzero_short_per_kb.size else 0.0,
+        "num_fragments": int(total_fragments),
+        "frac_zero_windows": float(np.mean(all_per_kb == 0)),
+        "median_num_fragments_per_kb": float(np.median(nonzero_all_per_kb)) if nonzero_all_per_kb.size else 0.0,
     }
     return pd.DataFrame(density_rows), metrics_row
 
