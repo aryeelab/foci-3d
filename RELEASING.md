@@ -19,6 +19,8 @@ or deleted; a fix is the next patch release.
    - add the exact environment the release was tested in as
      `envs/foci-3d-<version>.linux-64.explicit.txt` (`conda list -p <env> --explicit`), so users can
      rebuild it exactly.
+     Its package URLs must start with `https://conda.anaconda.org/`: a conda that installs through a mirror
+     (`channel_alias`) writes the mirror's URLs, so replace that prefix before committing.
 4. Tag and push:
    ```bash
    git tag -a v<version> -m "FOCI-3D <version>: <one-line summary>"

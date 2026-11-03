@@ -35,6 +35,7 @@ authoritative for options; this skill adds what the help text does not say.
      (cd "$SRC" && PATH="$ENV/bin:$PATH" "$ENV/bin/python" tests/run_tests.py)   # tool tests skip without PATH
      "$ENV/bin/foci-3d" --version
      ```
+     Behind a conda mirror, first rewrite the env file's `https://conda.anaconda.org/` URLs to the mirror's (`sed`).
      Creating the env downloads and links a few hundred packages (minutes on local disk, longer on
      network storage): run it as a batch job, not in an interactive agent call. Never edit an
      installed version; a new version gets a new directory and env.
